@@ -67,6 +67,54 @@ def test_notification_sets_waiting_cleared_by_activity():
     assert s.snapshot()["waiting"] == 0
 
 
+def test_waiting_pushes_needs_you_entry_named_by_project():
+    s = SessionStore(clock=FakeClock())
+    s.notification("a", project="webapp")
+    snap = s.snapshot()
+    assert snap["entries"][0] == "webapp: needs you"   # shows in the HUD feed
+    assert snap["msg"] == "webapp: needs you"           # newest entry
+
+
+def test_waiting_without_project():
+    s = SessionStore(clock=FakeClock())
+    s.notification("a")
+    assert s.snapshot()["entries"][0] == "needs you"
+
+
+def test_waiting_multiple_sessions_each_get_a_line():
+    clock = FakeClock()
+    s = SessionStore(clock=clock)
+    s.notification("a", project="webapp")
+    clock.t += 1
+    s.notification("b", project="docs")   # newest
+    snap = s.snapshot()
+    assert snap["waiting"] == 2
+    assert snap["entries"][0] == "docs: needs you"
+    assert "webapp: needs you" in snap["entries"]
+
+
+def test_waiting_appears_above_activity():
+    s = SessionStore(clock=FakeClock())
+    s.post_tool("a", "Bash", "ls", project="webapp")
+    s.notification("a", project="webapp")
+    assert s.snapshot()["entries"][0] == "webapp: needs you"
+
+
+def test_post_tool_project_remembered_for_later_waiting():
+    s = SessionStore(clock=FakeClock())
+    s.post_tool("a", "Bash", "ls", project="webapp")
+    s.notification("a")   # no project on this event
+    assert s.snapshot()["entries"][0] == "webapp: needs you"
+
+
+def test_repeat_notification_no_duplicate_entry():
+    s = SessionStore(clock=FakeClock())
+    s.notification("a", project="webapp")
+    s.notification("a", project="webapp")   # already waiting
+    entries = s.snapshot()["entries"]
+    assert entries.count("webapp: needs you") == 1
+
+
 def test_stop_clears_running_and_pulses_completed_once():
     s = SessionStore(clock=FakeClock())
     s.prompt_submit("a")

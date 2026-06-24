@@ -8,7 +8,6 @@ from .config import load
 _SIMPLE = {
     "session-start": "session_start",
     "prompt-submit": "prompt_submit",
-    "notification": "notification",
     "stop": "stop",
     "session-end": "session_end",
 }
@@ -40,6 +39,9 @@ def map_event(event: str, data: dict) -> dict | None:
         return {"event": "post_tool", "session_id": sid,
                 "tool": data.get("tool_name", "tool"),
                 "detail": _detail(data.get("tool_input", {})),
+                "project": _project(data.get("cwd"))}
+    if event == "notification":
+        return {"event": "notification", "session_id": sid,
                 "project": _project(data.get("cwd"))}
     name = _SIMPLE.get(event)
     if name is None:

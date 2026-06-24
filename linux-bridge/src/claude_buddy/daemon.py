@@ -16,7 +16,8 @@ _DISPATCH = {
     "post_tool": lambda s, p: s.post_tool(
         p["session_id"], p.get("tool", "tool"), p.get("detail", ""),
         p.get("project", "")),
-    "notification": lambda s, p: s.notification(p["session_id"]),
+    "notification": lambda s, p: s.notification(
+        p["session_id"], p.get("project", "")),
     "stop": lambda s, p: s.stop(p["session_id"]),
     "session_end": lambda s, p: s.session_end(p["session_id"]),
 }

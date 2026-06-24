@@ -7,6 +7,7 @@ class _Session:
     running: bool = False
     waiting: bool = False
     last_seen: float = 0.0
+    project: str = ""
 
 
 def _line(tool: str, detail: str, project: str = "") -> str:
@@ -45,12 +46,24 @@ class SessionStore:
         s = self._touch(sid)
         s.running = True
         s.waiting = False
+        if project:
+            s.project = project
         self._recent.insert(0, _line(tool, detail, project))
         del self._recent[self._max_entries:]
 
-    def notification(self, sid: str) -> None:
+    def notification(self, sid: str, project: str = "") -> None:
         s = self._touch(sid)
-        s.waiting = True
+        if project:
+            s.project = project
+        if not s.waiting:
+            # Surface the alert in the activity feed: the HUD shows entries
+            # (not msg) once any activity exists, so a "needs you" entry is
+            # how you see WHICH project is waiting. Guard against duplicate
+            # spam from repeated notifications for the same session.
+            s.waiting = True
+            proj = s.project
+            self._recent.insert(0, f"{proj}: needs you" if proj else "needs you")
+            del self._recent[self._max_entries:]
 
     def stop(self, sid: str) -> None:
         s = self._touch(sid)

@@ -45,8 +45,16 @@ def test_map_post_tool_trailing_slash_cwd():
 def test_map_simple_events():
     assert hook.map_event("stop", {"session_id": "a"}) == {
         "event": "stop", "session_id": "a"}
-    assert hook.map_event("notification", {"session_id": "a"}) == {
-        "event": "notification", "session_id": "a"}
+
+
+def test_map_notification_includes_project():
+    out = hook.map_event("notification", {"session_id": "a", "cwd": "/x/webapp"})
+    assert out == {"event": "notification", "session_id": "a", "project": "webapp"}
+
+
+def test_map_notification_no_cwd_empty_project():
+    out = hook.map_event("notification", {"session_id": "a"})
+    assert out == {"event": "notification", "session_id": "a", "project": ""}
 
 
 def test_map_ignores_no_session():
