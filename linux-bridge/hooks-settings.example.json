@@ -1,0 +1,22 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "claude-buddy-hook session-start" } ] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "claude-buddy-hook prompt-submit" } ] }
+    ],
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [ { "type": "command", "command": "claude-buddy-hook post-tool" } ] }
+    ],
+    "Notification": [
+      { "hooks": [ { "type": "command", "command": "claude-buddy-hook notification" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "claude-buddy-hook stop" } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "claude-buddy-hook session-end" } ] }
+    ]
+  }
+}

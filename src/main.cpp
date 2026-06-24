@@ -412,19 +412,19 @@ static uint8_t clockDow() { return _clkDt.WeekDay % 7; }
 static void drawClock() {
   const Palette& p = characterPalette();
   char hm[6]; snprintf(hm, sizeof(hm), "%02u:%02u", _clkTm.Hours, _clkTm.Minutes);
-  char ss[4]; snprintf(ss, sizeof(ss), ":%02u", _clkTm.Seconds);
   uint8_t mi = (_clkDt.Month >= 1 && _clkDt.Month <= 12) ? _clkDt.Month - 1 : 0;
   char dl[8]; snprintf(dl, sizeof(dl), "%s %02u", MON[mi], _clkDt.Date);
 
   if (clockOrient == 0) {
     paintedOrient = 0;
-    // Bottom half — buddy naturally lives at y=0..82, GIF peeks at top
-    // via peek mode. Clearing from 90 leaves both untouched.
-    spr.fillRect(0, 90, W, H - 90, p.bg);
+    // Portrait: keep the full-size pet up top and tuck a compact time + date
+    // into the bottom strip. (Rebalanced from upstream's big-clock layout so
+    // the buddy stays the star while charging.) Pet renders y=0..~164; clear
+    // and draw only from y=198 down.
+    spr.fillRect(0, 198, W, H - 198, p.bg);
     spr.setTextDatum(MC_DATUM);
-    spr.setTextSize(4); spr.setTextColor(p.text, p.bg);    spr.drawString(hm, CX, 140);
-    spr.setTextSize(2); spr.setTextColor(p.textDim, p.bg); spr.drawString(ss, CX, 175);
-    spr.setTextSize(1);                                     spr.drawString(dl, CX, 200);
+    spr.setTextSize(2); spr.setTextColor(p.text, p.bg);    spr.drawString(hm, CX, 214);
+    spr.setTextSize(1); spr.setTextColor(p.textDim, p.bg); spr.drawString(dl, CX, 232);
     spr.setTextDatum(TL_DATUM);
     return;
   }
@@ -480,7 +480,7 @@ PersonaState derive(const TamaState& s) {
   if (!s.connected)            return P_IDLE;
   if (s.sessionsWaiting > 0)   return P_ATTENTION;
   if (s.recentlyCompleted)     return P_CELEBRATE;
-  if (s.sessionsRunning >= 3)  return P_BUSY;
+  if (s.sessionsRunning >= 1)  return P_BUSY;   // single Claude Code session = busy (Linux bridge)
   return P_IDLE;   // connected, 0+ sessions, nothing urgent — hang out
 }
 
@@ -1158,8 +1158,9 @@ void loop() {
   static bool wasClocking = false;
   static bool wasLandscape = false;
   if (clocking != wasClocking || landscapeClock != wasLandscape) {
-    if (clocking && !landscapeClock) characterSetPeek(true);
-    else applyDisplayMode();
+    // Portrait clock keeps the pet full-size (no peek); the compact clock
+    // draws into the bottom strip in drawClock().
+    applyDisplayMode();
     characterInvalidate();
     if (buddyMode) buddyInvalidate();
     wasClocking = clocking;

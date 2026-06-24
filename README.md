@@ -1,5 +1,17 @@
 # claude-desktop-buddy
 
+> **This fork** adds a **Linux bridge** so the buddy works with **Claude Code**
+> on Linux — the upstream bridge is built into the macOS/Windows desktop app,
+> which Linux doesn't have. Running Claude Code on Linux? See
+> **[`linux-bridge/`](linux-bridge/)** to set it up.
+>
+> It also carries two small firmware tweaks for a single-user Claude Code setup:
+> - **`busy` triggers at 1 running session** (upstream: 3), so one active session shows as busy.
+> - the **portrait charging clock is rebalanced** — full-size pet on top, compact time + date tucked at the bottom (upstream puts a big clock over a shrunken pet).
+>
+> Pull upstream updates from the `upstream` remote; the bridge lives in its own
+> `linux-bridge/` directory and the firmware changes are isolated to `src/main.cpp`.
+
 Claude for macOS and Windows can connect Claude Cowork and Claude Code to
 maker devices over BLE, so developers and makers can build hardware that
 displays permission prompts, recent messages, and other interactions. We've
