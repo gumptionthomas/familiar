@@ -51,7 +51,7 @@ The setup in use here — a true magnetic snap-on mount ("Combo 2"):
 | Item | Purpose |
 |------|---------|
 | Magnetic USB-C cable kit (cable + tips) | Snap-on charging. A tip lives in the stick's bottom port permanently; the cable snaps to it. Charge-only is fine. |
-| Adhesive metal plate (e.g. Volport) | One rectangle stuck on the M5 case back, making the stick magnet-mountable. |
+| ~20mm round adhesive **steel** disc | Stick one on the M5 case back to make it magnet-mountable. Use a ~20mm (0.8") disc — the stick is only ~1" (25mm) wide, so phone-sized plates overhang. Get plain **steel** (not a magnet — steel grabs the mount in any orientation; magnet-on-magnet can repel). Position so the bottom USB-C port stays clear. |
 | Magnetic desk mount (e.g. WixGear) | Weighted desk stand the stick snaps onto; built-in cable holder routes the charge cable. |
 | Any 5V USB charger | Power source. The stick sips power, so anything works. |
 
