@@ -480,7 +480,7 @@ PersonaState derive(const TamaState& s) {
   if (!s.connected)            return P_IDLE;
   if (s.sessionsWaiting > 0)   return P_ATTENTION;
   if (s.recentlyCompleted)     return P_CELEBRATE;
-  if (s.sessionsRunning >= 3)  return P_BUSY;
+  if (s.sessionsRunning >= 1)  return P_BUSY;   // single Claude Code session = busy (Linux bridge)
   return P_IDLE;   // connected, 0+ sessions, nothing urgent — hang out
 }
 
