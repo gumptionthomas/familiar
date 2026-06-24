@@ -24,6 +24,14 @@ def _detail(tool_input: dict) -> str:
     return ""
 
 
+def _project(cwd) -> str:
+    # Project label = the working directory's basename, capped so the tagged
+    # activity line stays readable on the 135px screen. "" when cwd is absent.
+    if not cwd:
+        return ""
+    return os.path.basename(str(cwd).rstrip("/"))[:12]
+
+
 def map_event(event: str, data: dict) -> dict | None:
     sid = data.get("session_id")
     if not sid:
@@ -31,7 +39,8 @@ def map_event(event: str, data: dict) -> dict | None:
     if event == "post-tool":
         return {"event": "post_tool", "session_id": sid,
                 "tool": data.get("tool_name", "tool"),
-                "detail": _detail(data.get("tool_input", {}))}
+                "detail": _detail(data.get("tool_input", {})),
+                "project": _project(data.get("cwd"))}
     name = _SIMPLE.get(event)
     if name is None:
         return None

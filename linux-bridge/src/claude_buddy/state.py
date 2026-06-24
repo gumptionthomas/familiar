@@ -9,8 +9,9 @@ class _Session:
     last_seen: float = 0.0
 
 
-def _line(tool: str, detail: str) -> str:
-    return f"{tool}: {detail}" if detail else tool
+def _line(tool: str, detail: str, project: str = "") -> str:
+    core = f"{tool}: {detail}" if detail else tool
+    return f"[{project}] {core}" if project else core
 
 
 class SessionStore:
@@ -39,11 +40,12 @@ class SessionStore:
         s.running = True
         s.waiting = False
 
-    def post_tool(self, sid: str, tool: str, detail: str = "") -> None:
+    def post_tool(self, sid: str, tool: str, detail: str = "",
+                  project: str = "") -> None:
         s = self._touch(sid)
         s.running = True
         s.waiting = False
-        self._recent.insert(0, _line(tool, detail))
+        self._recent.insert(0, _line(tool, detail, project))
         del self._recent[self._max_entries:]
 
     def notification(self, sid: str) -> None:

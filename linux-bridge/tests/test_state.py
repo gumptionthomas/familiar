@@ -44,6 +44,20 @@ def test_post_tool_sets_activity_and_keeps_running():
     assert snap["entries"][0] == "Bash: git push"
 
 
+def test_post_tool_tags_project():
+    s = SessionStore(clock=FakeClock())
+    s.post_tool("a", "Edit", "main.cpp", project="buddy")
+    snap = s.snapshot()
+    assert snap["entries"][0] == "[buddy] Edit: main.cpp"
+    assert snap["msg"] == "[buddy] Edit: main.cpp"
+
+
+def test_post_tool_no_project_unprefixed():
+    s = SessionStore(clock=FakeClock())
+    s.post_tool("a", "Bash", "ls")
+    assert s.snapshot()["entries"][0] == "Bash: ls"
+
+
 def test_notification_sets_waiting_cleared_by_activity():
     s = SessionStore(clock=FakeClock())
     s.prompt_submit("a")

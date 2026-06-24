@@ -9,7 +9,7 @@ def test_map_post_tool_extracts_detail():
             "tool_input": {"command": "git push"}}
     out = hook.map_event("post-tool", data)
     assert out == {"event": "post_tool", "session_id": "a",
-                   "tool": "Bash", "detail": "git push"}
+                   "tool": "Bash", "detail": "git push", "project": ""}
 
 
 def test_map_post_tool_file_path_detail():
@@ -17,7 +17,29 @@ def test_map_post_tool_file_path_detail():
             "tool_input": {"file_path": "/x/main.cpp"}}
     out = hook.map_event("post-tool", data)
     assert out == {"event": "post_tool", "session_id": "a",
-                   "tool": "Read", "detail": "main.cpp"}
+                   "tool": "Read", "detail": "main.cpp", "project": ""}
+
+
+def test_map_post_tool_project_from_cwd():
+    data = {"session_id": "a", "tool_name": "Bash", "tool_input": {"command": "ls"},
+            "cwd": "/home/me/dev/webapp"}
+    out = hook.map_event("post-tool", data)
+    assert out["project"] == "webapp"
+
+
+def test_map_post_tool_project_truncated_to_12():
+    data = {"session_id": "a", "tool_name": "Edit", "tool_input": {},
+            "cwd": "/home/me/claude-desktop-buddy"}
+    out = hook.map_event("post-tool", data)
+    assert out["project"] == "claude-deskt"
+    assert len(out["project"]) <= 12
+
+
+def test_map_post_tool_trailing_slash_cwd():
+    data = {"session_id": "a", "tool_name": "Bash", "tool_input": {},
+            "cwd": "/home/me/webapp/"}
+    out = hook.map_event("post-tool", data)
+    assert out["project"] == "webapp"
 
 
 def test_map_simple_events():
