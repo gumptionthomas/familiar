@@ -40,8 +40,12 @@ async def run_with_ble(cfg, store, on_connect) -> None:
             await asyncio.sleep(min(backoff, 30))
             backoff = min(backoff * 2, 30)
             continue
+        disconnected = asyncio.Event()
         try:
-            async with BleakClient(address) as client:
+            async with BleakClient(
+                address,
+                disconnected_callback=lambda _c: disconnected.set(),
+            ) as client:
                 print(f"[claude-buddy] connected {address}")
                 backoff = 1.0
                 transport = BleTransport(client)
@@ -53,7 +57,22 @@ async def run_with_ble(cfg, store, on_connect) -> None:
                     pass
                 await on_connect(transport, cfg.owner)
                 bridge = Bridge(store, transport, cfg.socket_path)
-                await bridge.run()
+                # Race the bridge against the disconnect signal. If the link
+                # drops (battery death, unplug, out of range), bleak fires
+                # disconnected_callback -> tear down and reconnect, instead of
+                # the heartbeat loop silently writing into a dead link forever
+                # (the push loop swallows write errors, so it can't self-detect).
+                run_task = asyncio.ensure_future(bridge.run())
+                disc_task = asyncio.ensure_future(disconnected.wait())
+                done, pending = await asyncio.wait(
+                    {run_task, disc_task}, return_when=asyncio.FIRST_COMPLETED)
+                for t in pending:
+                    t.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+                if run_task in done:
+                    run_task.result()   # re-raise a real failure to the retry loop
+                else:
+                    print(f"[claude-buddy] link dropped; reconnecting {address}")
         except Exception as e:
             print(f"[claude-buddy] disconnected: {e}")
             await asyncio.sleep(min(backoff, 30))
