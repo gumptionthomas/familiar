@@ -1001,8 +1001,16 @@ void loop() {
 
   if ((int32_t)(now - oneShotUntil) >= 0) activeState = baseState;
 
-  // LED: pulse on attention, otherwise off
-  if (activeState == P_ATTENTION && settings().led) {
+  // LED: pulse on attention until acknowledged. Any button tap silences the
+  // blink for the current alert; the screen still shows it's pending, and the
+  // blink re-arms automatically on the next new attention episode.
+  static bool attentionAcked = false;
+  if (activeState != P_ATTENTION) {
+    attentionAcked = false;                     // re-arm once the alert clears
+  } else if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed()) {
+    attentionAcked = true;                      // tap A or B to dismiss the blink
+  }
+  if (activeState == P_ATTENTION && settings().led && !attentionAcked) {
     digitalWrite(LED_PIN, (now / 400) % 2 ? LOW : HIGH);
   } else {
     digitalWrite(LED_PIN, HIGH);
@@ -1054,6 +1062,7 @@ void loop() {
   // AXP power button (left side): short-press toggles screen off.
   // Long-press (6s) still powers off the device via AXP hardware.
   if (M5.Axp.GetBtnPress() == 0x02) {
+    attentionAcked = true;          // power tap also dismisses the attention blink
     if (screenOff) {
       wake();
     } else {
