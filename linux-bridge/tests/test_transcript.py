@@ -80,7 +80,7 @@ def test_collapses_and_caps(tmp_path):
     long = " ".join(["word"] * 60)
     p = _w(tmp_path, _user("go"), _assistant(long))
     out = transcript.last_reply(p)
-    assert len(out) <= 48
+    assert len(out) <= 80
     assert "\n" not in out
 
 

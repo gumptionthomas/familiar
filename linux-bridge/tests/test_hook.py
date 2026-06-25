@@ -5,23 +5,29 @@ from claude_buddy import hook
 
 
 def test_map_post_tool_carries_only_project():
-    # tool/detail are gone — post_tool just keeps state, carrying the project
+    # tool/detail are gone — post_tool just keeps state, carrying the project code
     data = {"session_id": "a", "tool_name": "Bash",
             "tool_input": {"command": "git push"}, "cwd": "/home/me/dev/webapp"}
     out = hook.map_event("post-tool", data)
-    assert out == {"event": "post_tool", "session_id": "a", "project": "webapp"}
+    assert out == {"event": "post_tool", "session_id": "a", "project": "weba"}
 
 
-def test_map_post_tool_project_truncated_to_12():
-    data = {"session_id": "a", "cwd": "/home/me/claude-desktop-buddy"}
-    out = hook.map_event("post-tool", data)
-    assert out["project"] == "claude-deskt"
-    assert len(out["project"]) <= 12
+def test_map_post_tool_project_code_initials():
+    # multi-word dir -> uppercase initials (capped at 4)
+    out = hook.map_event("post-tool",
+                         {"session_id": "a", "cwd": "/home/me/claude-desktop-buddy"})
+    assert out["project"] == "CDB"
+
+
+def test_map_post_tool_project_code_single_word():
+    # single word -> first 4 chars, as-is
+    out = hook.map_event("post-tool", {"session_id": "a", "cwd": "/home/me/dashboard"})
+    assert out["project"] == "dash"
 
 
 def test_map_post_tool_trailing_slash_cwd():
     out = hook.map_event("post-tool", {"session_id": "a", "cwd": "/home/me/webapp/"})
-    assert out["project"] == "webapp"
+    assert out["project"] == "weba"
 
 
 def test_map_post_tool_no_cwd():
@@ -38,21 +44,21 @@ def test_map_simple_events():
 
 def test_map_prompt_submit_includes_project():
     out = hook.map_event("prompt-submit", {"session_id": "a", "cwd": "/x/webapp"})
-    assert out == {"event": "prompt_submit", "session_id": "a", "project": "webapp"}
+    assert out == {"event": "prompt_submit", "session_id": "a", "project": "weba"}
 
 
 def test_map_stop_passes_transcript_path(tmp_path):
     out = hook.map_event("stop", {"session_id": "a", "cwd": "/x/webapp",
                                   "transcript_path": "/x/t.jsonl"})
     assert out == {"event": "stop", "session_id": "a",
-                   "project": "webapp", "transcript_path": "/x/t.jsonl"}
+                   "project": "weba", "transcript_path": "/x/t.jsonl"}
 
 
 def test_map_notification_permission_alerts():
     out = hook.map_event("notification", {
         "session_id": "a", "cwd": "/x/webapp",
         "message": "Claude needs your permission to use Bash"})
-    assert out == {"event": "notification", "session_id": "a", "project": "webapp"}
+    assert out == {"event": "notification", "session_id": "a", "project": "weba"}
 
 
 def test_map_notification_idle_ignored():
@@ -63,7 +69,7 @@ def test_map_notification_idle_ignored():
 
 def test_map_notification_includes_project():
     out = hook.map_event("notification", {"session_id": "a", "cwd": "/x/webapp"})
-    assert out == {"event": "notification", "session_id": "a", "project": "webapp"}
+    assert out == {"event": "notification", "session_id": "a", "project": "weba"}
 
 
 def test_map_notification_no_cwd_empty_project():

@@ -21,27 +21,36 @@ def test_idle_when_empty():
 
 def test_prompt_submit_shows_thinking():
     s = SessionStore(clock=FakeClock())
-    s.prompt_submit("a", project="buddy")
+    s.prompt_submit("a", project="CDB")
     snap = s.snapshot()
-    assert snap["entries"][-1] == "[buddy] thinking..."
-    assert snap["msg"] == "[buddy] thinking..."
+    # single project -> no tag prefix
+    assert snap["entries"][-1] == "thinking..."
+    assert snap["msg"] == "thinking..."
 
 
 def test_stop_pulses_completed_no_message():
     s = SessionStore(clock=FakeClock())
-    s.prompt_submit("a", project="buddy")   # pushes "[buddy] thinking..."
+    s.prompt_submit("a", project="CDB")   # pushes "thinking..."
     s.stop("a")          # the reply arrives later via push_message
     snap = s.snapshot()
     assert snap["completed"] is True
-    assert snap["entries"] == ["[buddy] thinking..."]
+    assert snap["entries"] == ["thinking..."]
 
 
-def test_push_message_speaks_tagged_reply():
+def test_push_message_single_project_untagged():
     s = SessionStore(clock=FakeClock())
-    s.push_message("buddy", "Merged and live")
+    s.push_message("CDB", "Merged and live")
     snap = s.snapshot()
-    assert snap["entries"][-1] == "[buddy] Merged and live"
-    assert snap["msg"] == "[buddy] Merged and live"
+    assert snap["entries"][-1] == "Merged and live"
+    assert snap["msg"] == "Merged and live"
+
+
+def test_push_message_tagged_when_feed_spans_projects():
+    s = SessionStore(clock=FakeClock())
+    s.push_message("CDB", "merged it")
+    s.push_message("weba", "tests pass")
+    # feed spans 2 projects -> both lines get their code
+    assert s.snapshot()["entries"] == ["[CDB] merged it", "[weba] tests pass"]
 
 
 def test_running_after_prompt():
@@ -71,13 +80,13 @@ def test_notification_sets_waiting_cleared_by_activity():
     assert s.snapshot()["waiting"] == 0
 
 
-def test_waiting_pins_needs_you_as_newest_named_by_project():
+def test_waiting_pins_needs_you_as_newest():
     s = SessionStore(clock=FakeClock())
     s.notification("a", project="webapp")
     snap = s.snapshot()
-    # newest entry is last; the firmware highlights it and msg mirrors it
-    assert snap["entries"][-1] == "webapp: needs you"
-    assert snap["msg"] == "webapp: needs you"
+    # single project -> alert is untagged; firmware highlights the last line
+    assert snap["entries"][-1] == "needs you"
+    assert snap["msg"] == "needs you"
 
 
 def test_waiting_without_project():
@@ -94,8 +103,9 @@ def test_waiting_multiple_sessions_each_get_a_line():
     s.notification("b", project="docs")   # most recently waiting -> newest
     snap = s.snapshot()
     assert snap["waiting"] == 2
-    assert snap["entries"][-1] == "docs: needs you"
-    assert "webapp: needs you" in snap["entries"]
+    # two projects waiting -> each alert is tagged
+    assert snap["entries"][-1] == "[docs] needs you"
+    assert "[webapp] needs you" in snap["entries"]
 
 
 def test_waiting_alert_with_concurrent_busy_session():
@@ -104,16 +114,19 @@ def test_waiting_alert_with_concurrent_busy_session():
     # a busy *other* session runs a tool while we're waiting — adds no feed line
     s.post_tool("b", project="api")
     snap = s.snapshot()
-    assert snap["entries"] == ["webapp: needs you"]   # only the alert shows
+    # only webapp's alert is in the feed (b adds no line) -> single -> untagged
+    assert snap["entries"] == ["needs you"]
     assert snap["running"] == 1
     assert snap["waiting"] == 1
 
 
 def test_post_tool_project_remembered_for_later_waiting():
     s = SessionStore(clock=FakeClock())
-    s.post_tool("a", project="webapp")
-    s.notification("a")   # no project on this event
-    assert s.snapshot()["entries"][-1] == "webapp: needs you"
+    s.post_tool("a", project="webapp")   # remember a's project
+    s.push_message("docs", "hi")          # a 2nd project in the feed -> tags on
+    s.notification("a")                   # no project on this event
+    # the alert is tagged with a's remembered project
+    assert "[webapp] needs you" in s.snapshot()["entries"]
 
 
 def test_repeat_notification_no_duplicate_alert():
@@ -121,7 +134,7 @@ def test_repeat_notification_no_duplicate_alert():
     s.notification("a", project="webapp")
     s.notification("a", project="webapp")   # already waiting
     entries = s.snapshot()["entries"]
-    assert entries.count("webapp: needs you") == 1
+    assert entries.count("needs you") == 1
 
 
 def test_stop_clears_running_and_pulses_completed_once():

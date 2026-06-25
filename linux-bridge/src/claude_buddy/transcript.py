@@ -43,12 +43,11 @@ def _entries(path):
     return items
 
 
-def last_reply(path, cap=48):
+def last_reply(path, cap=80):
     """The turn's closing assistant text after the most recent human prompt.
 
-    Capped to ~48 chars so the snippet fits the firmware HUD's 3-line window
-    (it shows only the last few wrapped rows); a longer snippet would scroll
-    its own opening off the top.
+    Capped to ~80 chars to fill the firmware HUD's 7-line window without
+    running on.
 
     Claude Code writes a turn as multiple entries — intermediate text, separate
     tool_use entries, tool results, then the final text. The closing reply is

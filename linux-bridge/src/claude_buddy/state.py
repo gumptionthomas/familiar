@@ -10,10 +10,6 @@ class _Session:
     project: str = ""
 
 
-def _tagged(project: str, text: str) -> str:
-    return f"[{project}] {text}" if project else text
-
-
 class SessionStore:
     def __init__(self, stale_after: float = 300.0, max_entries: int = 6,
                  clock=time.monotonic):
@@ -21,7 +17,7 @@ class SessionStore:
         self._stale_after = stale_after
         self._max_entries = max_entries
         self._clock = clock
-        self._recent: list[str] = []   # newest first
+        self._recent: list[tuple[str, str]] = []   # (code, text), newest first
         self._completed = False
 
     def _touch(self, sid: str) -> _Session:
@@ -35,8 +31,8 @@ class SessionStore:
     def session_start(self, sid: str) -> None:
         self._touch(sid)
 
-    def _push(self, text: str) -> None:
-        self._recent.insert(0, text)
+    def _push(self, code: str, text: str) -> None:
+        self._recent.insert(0, (code, text))
         del self._recent[self._max_entries:]
 
     def prompt_submit(self, sid: str, project: str = "") -> None:
@@ -47,7 +43,7 @@ class SessionStore:
             s.project = project
         # Show "thinking..." the instant a prompt is submitted, so the feed
         # isn't stuck on the previous turn's last command.
-        self._push(_tagged(s.project, "thinking..."))
+        self._push(s.project, "thinking...")
 
     def post_tool(self, sid: str, project: str = "") -> None:
         # No feed line — tool calls are noise. Just keep the session busy and
@@ -75,7 +71,7 @@ class SessionStore:
     def push_message(self, project: str, text: str) -> None:
         # The buddy "speaks": pushed by the daemon once the transcript has the
         # turn's final assistant message.
-        self._push(_tagged(project, text))
+        self._push(project, text)
 
     def session_end(self, sid: str) -> None:
         self._sessions.pop(sid, None)
@@ -93,18 +89,26 @@ class SessionStore:
         completed = self._completed
         self._completed = False
 
-        # Activity oldest-first: the firmware treats the LAST entry as newest
-        # (drawHUD highlights lines[n-1] and data.h checks lines[n-1] == msg).
-        entries = list(reversed(self._recent))
-        # Pin a "needs you" line per waiting session at the newest end so the
-        # alert stays the most-prominent line while a prompt is pending,
-        # instead of being buried by concurrent activity. Recency order, deduped.
+        # (code, text) oldest-first: the firmware treats the LAST entry as
+        # newest (drawHUD highlights lines[n-1] and data.h checks
+        # lines[n-1] == msg).
+        combined = list(reversed(self._recent))
+        # Pin one "needs you" per waiting project at the newest end so the alert
+        # stays the most-prominent line while a prompt is pending. Recency
+        # order, deduped by project.
+        seen = set()
         for s in sorted(waiters, key=lambda x: x.last_seen):
-            alert = f"{s.project}: needs you" if s.project else "needs you"
-            if alert in entries:
-                entries.remove(alert)
-            entries.append(alert)
-        entries = entries[-self._max_entries:]
+            key = s.project or "\0"
+            if key in seen:
+                continue
+            seen.add(key)
+            combined.append((s.project, "needs you"))
+        combined = combined[-self._max_entries:]
+
+        # Tag with the project code only when the feed spans 2+ projects — a
+        # single-project feed needs no disambiguation.
+        multi = len({c for c, _ in combined if c}) >= 2
+        entries = [f"[{c}] {t}" if (multi and c) else t for c, t in combined]
 
         msg = entries[-1] if entries else ("working" if running else "idle")
         return {

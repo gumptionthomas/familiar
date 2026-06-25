@@ -70,4 +70,5 @@ def test_speak_pushes_reply_from_transcript(tmp_path):
         return s.snapshot()
 
     snap = asyncio.run(scenario())
-    assert snap["entries"][-1] == "[buddy] All done"
+    # single project in the feed -> untagged
+    assert snap["entries"][-1] == "All done"

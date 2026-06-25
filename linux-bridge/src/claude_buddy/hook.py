@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import socket
 import sys
 
@@ -12,11 +13,16 @@ _SIMPLE = {
 
 
 def _project(cwd) -> str:
-    # Project label = the working directory's basename, capped so the tagged
-    # activity line stays readable on the 135px screen. "" when cwd is absent.
+    # A short, glanceable project code for the [tag] prefix: initials of a
+    # multi-word name (claude-desktop-buddy -> CDB), else the first 4 chars of a
+    # single word (webapp -> weba). "" when cwd is absent.
     if not cwd:
         return ""
-    return os.path.basename(str(cwd).rstrip("/"))[:12]
+    name = os.path.basename(str(cwd).rstrip("/"))
+    parts = [p for p in re.split(r"[-_. ]+", name) if p]
+    if len(parts) >= 2:
+        return "".join(p[0] for p in parts)[:4].upper()
+    return name[:4]
 
 
 def map_event(event: str, data: dict) -> dict | None:
