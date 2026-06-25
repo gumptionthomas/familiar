@@ -12,6 +12,20 @@ def test_map_post_tool_extracts_detail():
                    "tool": "Bash", "detail": "git push", "project": ""}
 
 
+def test_map_post_tool_strips_cd_prefix():
+    data = {"session_id": "a", "tool_name": "Bash",
+            "tool_input": {"command": "cd /home/me/webapp && git push"}}
+    out = hook.map_event("post-tool", data)
+    assert out["detail"] == "git push"
+
+
+def test_map_post_tool_bare_cd_kept():
+    data = {"session_id": "a", "tool_name": "Bash",
+            "tool_input": {"command": "cd /home/me/webapp"}}
+    out = hook.map_event("post-tool", data)
+    assert out["detail"] == "cd /home/me/webapp"
+
+
 def test_map_post_tool_file_path_detail():
     data = {"session_id": "a", "tool_name": "Read",
             "tool_input": {"file_path": "/x/main.cpp"}}

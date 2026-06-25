@@ -67,18 +67,19 @@ def test_notification_sets_waiting_cleared_by_activity():
     assert s.snapshot()["waiting"] == 0
 
 
-def test_waiting_pushes_needs_you_entry_named_by_project():
+def test_waiting_pins_needs_you_as_newest_named_by_project():
     s = SessionStore(clock=FakeClock())
     s.notification("a", project="webapp")
     snap = s.snapshot()
-    assert snap["entries"][0] == "webapp: needs you"   # shows in the HUD feed
-    assert snap["msg"] == "webapp: needs you"           # newest entry
+    # newest entry is last; the firmware highlights it and msg mirrors it
+    assert snap["entries"][-1] == "webapp: needs you"
+    assert snap["msg"] == "webapp: needs you"
 
 
 def test_waiting_without_project():
     s = SessionStore(clock=FakeClock())
     s.notification("a")
-    assert s.snapshot()["entries"][0] == "needs you"
+    assert s.snapshot()["entries"][-1] == "needs you"
 
 
 def test_waiting_multiple_sessions_each_get_a_line():
@@ -86,28 +87,32 @@ def test_waiting_multiple_sessions_each_get_a_line():
     s = SessionStore(clock=clock)
     s.notification("a", project="webapp")
     clock.t += 1
-    s.notification("b", project="docs")   # newest
+    s.notification("b", project="docs")   # most recently waiting -> newest
     snap = s.snapshot()
     assert snap["waiting"] == 2
-    assert snap["entries"][0] == "docs: needs you"
+    assert snap["entries"][-1] == "docs: needs you"
     assert "webapp: needs you" in snap["entries"]
 
 
-def test_waiting_appears_above_activity():
+def test_waiting_pinned_above_concurrent_activity():
     s = SessionStore(clock=FakeClock())
-    s.post_tool("a", "Bash", "ls", project="webapp")
     s.notification("a", project="webapp")
-    assert s.snapshot()["entries"][0] == "webapp: needs you"
+    # a busy *other* session's activity arrives while we're waiting
+    s.post_tool("b", "Bash", "git push", project="api")
+    snap = s.snapshot()
+    # alert stays the newest/most-prominent line, activity sits below it
+    assert snap["entries"][-1] == "webapp: needs you"
+    assert "[api] Bash: git push" in snap["entries"]
 
 
 def test_post_tool_project_remembered_for_later_waiting():
     s = SessionStore(clock=FakeClock())
     s.post_tool("a", "Bash", "ls", project="webapp")
     s.notification("a")   # no project on this event
-    assert s.snapshot()["entries"][0] == "webapp: needs you"
+    assert s.snapshot()["entries"][-1] == "webapp: needs you"
 
 
-def test_repeat_notification_no_duplicate_entry():
+def test_repeat_notification_no_duplicate_alert():
     s = SessionStore(clock=FakeClock())
     s.notification("a", project="webapp")
     s.notification("a", project="webapp")   # already waiting
@@ -153,10 +158,11 @@ def test_sweep_prunes_stale():
     assert s.snapshot()["total"] == 0
 
 
-def test_entries_capped_newest_first():
+def test_entries_capped_oldest_first():
     s = SessionStore(max_entries=2, clock=FakeClock())
     s.post_tool("a", "Read", "1")
     s.post_tool("a", "Read", "2")
     s.post_tool("a", "Read", "3")
     entries = s.snapshot()["entries"]
-    assert entries == ["Read: 3", "Read: 2"]
+    # capped to the 2 newest, emitted oldest-first (newest last)
+    assert entries == ["Read: 2", "Read: 3"]

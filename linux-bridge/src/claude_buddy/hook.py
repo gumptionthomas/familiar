@@ -1,9 +1,14 @@
 import json
 import os
+import re
 import socket
 import sys
 
 from .config import load
+
+# Strip a leading "cd <path> && " (or ";") so Bash detail shows the real
+# command, not the directory change most compound commands start with.
+_CD_PREFIX = re.compile(r"^\s*cd\s+(?:\"[^\"]*\"|'[^']*'|\S+)\s*(?:&&|;)\s*")
 
 _SIMPLE = {
     "session-start": "session_start",
@@ -17,7 +22,7 @@ def _detail(tool_input: dict) -> str:
     if not isinstance(tool_input, dict):
         return ""
     if "command" in tool_input:
-        return str(tool_input["command"])[:40]
+        return _CD_PREFIX.sub("", str(tool_input["command"]))[:40]
     if "file_path" in tool_input:
         return os.path.basename(str(tool_input["file_path"]))
     return ""

@@ -53,17 +53,9 @@ class SessionStore:
 
     def notification(self, sid: str, project: str = "") -> None:
         s = self._touch(sid)
+        s.waiting = True
         if project:
             s.project = project
-        if not s.waiting:
-            # Surface the alert in the activity feed: the HUD shows entries
-            # (not msg) once any activity exists, so a "needs you" entry is
-            # how you see WHICH project is waiting. Guard against duplicate
-            # spam from repeated notifications for the same session.
-            s.waiting = True
-            proj = s.project
-            self._recent.insert(0, f"{proj}: needs you" if proj else "needs you")
-            del self._recent[self._max_entries:]
 
     def stop(self, sid: str) -> None:
         s = self._touch(sid)
@@ -83,15 +75,29 @@ class SessionStore:
 
     def snapshot(self) -> dict:
         running = sum(1 for s in self._sessions.values() if s.running)
-        waiting = sum(1 for s in self._sessions.values() if s.waiting)
+        waiters = [s for s in self._sessions.values() if s.waiting]
         completed = self._completed
         self._completed = False
-        msg = self._recent[0] if self._recent else ("working" if running else "idle")
+
+        # Activity oldest-first: the firmware treats the LAST entry as newest
+        # (drawHUD highlights lines[n-1] and data.h checks lines[n-1] == msg).
+        entries = list(reversed(self._recent))
+        # Pin a "needs you" line per waiting session at the newest end so the
+        # alert stays the most-prominent line while a prompt is pending,
+        # instead of being buried by concurrent activity. Recency order, deduped.
+        for s in sorted(waiters, key=lambda x: x.last_seen):
+            alert = f"{s.project}: needs you" if s.project else "needs you"
+            if alert in entries:
+                entries.remove(alert)
+            entries.append(alert)
+        entries = entries[-self._max_entries:]
+
+        msg = entries[-1] if entries else ("working" if running else "idle")
         return {
             "total": len(self._sessions),
             "running": running,
-            "waiting": waiting,
+            "waiting": len(waiters),
             "msg": msg,
-            "entries": list(self._recent),
+            "entries": entries,
             "completed": completed,
         }
