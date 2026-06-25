@@ -2,3 +2,8 @@
 .vscode/
 .DS_Store
 data/
+
+# Python (linux-bridge)
+__pycache__/
+*.pyc
+.venv/
