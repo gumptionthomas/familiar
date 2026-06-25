@@ -82,6 +82,10 @@ static void nextPet() {
 }
 uint32_t wakeTransitionUntil = 0;
 const uint32_t SCREEN_OFF_MS = 30000;
+// Keep the activity/message feed up for this long after the last change before
+// the charging clock takes over, so a reply stays readable.
+const uint32_t CLOCK_IDLE_GRACE_MS = 120000;
+static uint32_t lastFeedChangeMs = 0;
 
 bool     napping = false;
 uint32_t napStartMs = 0;
@@ -992,6 +996,8 @@ void loop() {
   uint32_t now = millis();
 
   dataPoll(&tama);
+  static uint16_t feedGenSeen = 0;
+  if (tama.lineGen != feedGenSeen) { feedGenSeen = tama.lineGen; lastFeedChangeMs = now; }
   if (statsPollLevelUp()) triggerOneShot(P_CELEBRATE, 3000);
   baseState = derive(tama);
 
@@ -1164,7 +1170,8 @@ void loop() {
   bool clocking = displayMode == DISP_NORMAL
                && !menuOpen && !settingsOpen && !resetOpen && !inPrompt
                && tama.sessionsRunning == 0 && tama.sessionsWaiting == 0
-               && dataRtcValid() && _onUsb;
+               && dataRtcValid() && _onUsb
+               && (now - lastFeedChangeMs > CLOCK_IDLE_GRACE_MS);
   if (clocking) clockUpdateOrient();
   else { clockOrient = 0; orientFrames = 0; paintedOrient = 0; }
   bool landscapeClock = clocking && clockOrient != 0;
