@@ -27,20 +27,21 @@ def test_prompt_submit_shows_thinking():
     assert snap["msg"] == "[buddy] thinking..."
 
 
-def test_stop_pushes_assistant_message():
-    s = SessionStore(clock=FakeClock())
-    s.prompt_submit("a", project="buddy")
-    s.stop("a", project="buddy", message="Merged and live")
-    snap = s.snapshot()
-    assert snap["entries"][-1] == "[buddy] Merged and live"
-    assert snap["completed"] is True
-
-
-def test_stop_without_message_pushes_nothing_extra():
+def test_stop_pulses_completed_no_message():
     s = SessionStore(clock=FakeClock())
     s.post_tool("a", "Bash", "ls")
-    s.stop("a")          # no message
-    assert s.snapshot()["entries"] == ["Bash: ls"]
+    s.stop("a")          # message arrives later via push_message
+    snap = s.snapshot()
+    assert snap["completed"] is True
+    assert snap["entries"] == ["Bash: ls"]
+
+
+def test_push_message_speaks_tagged_reply():
+    s = SessionStore(clock=FakeClock())
+    s.push_message("buddy", "Merged and live")
+    snap = s.snapshot()
+    assert snap["entries"][-1] == "[buddy] Merged and live"
+    assert snap["msg"] == "[buddy] Merged and live"
 
 
 def test_running_after_prompt():

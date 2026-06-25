@@ -70,16 +70,18 @@ class SessionStore:
         if project:
             s.project = project
 
-    def stop(self, sid: str, project: str = "", message: str = "") -> None:
+    def stop(self, sid: str, project: str = "") -> None:
         s = self._touch(sid)
         s.running = False
         s.waiting = False
         self._completed = True
         if project:
             s.project = project
-        # The buddy "speaks" my reply: push the assistant message snippet.
-        if message:
-            self._push(_tagged(s.project, message))
+
+    def push_message(self, project: str, text: str) -> None:
+        # The buddy "speaks": pushed by the daemon once the transcript has the
+        # turn's final assistant message.
+        self._push(_tagged(project, text))
 
     def session_end(self, sid: str) -> None:
         self._sessions.pop(sid, None)

@@ -40,45 +40,6 @@ def _project(cwd) -> str:
     return os.path.basename(str(cwd).rstrip("/"))[:12]
 
 
-def _last_assistant_text(path) -> str:
-    # Pull the last assistant text block from the JSONL transcript so the buddy
-    # can "speak" my reply. Reads only the tail, parses defensively, and never
-    # raises (the hook must not fail or slow down the session).
-    if not path:
-        return ""
-    try:
-        with open(path, "rb") as f:
-            try:
-                f.seek(-32768, os.SEEK_END)
-            except OSError:
-                f.seek(0)
-            blob = f.read().decode("utf-8", "replace")
-        for line in reversed(blob.splitlines()):
-            line = line.strip()
-            if not line or '"assistant"' not in line:
-                continue
-            try:
-                obj = json.loads(line)
-            except Exception:
-                continue
-            msg = obj.get("message", obj)
-            if obj.get("type") != "assistant" and msg.get("role") != "assistant":
-                continue
-            content = msg.get("content", "")
-            if isinstance(content, list):
-                text = " ".join(
-                    b.get("text", "") for b in content
-                    if isinstance(b, dict) and b.get("type") == "text")
-            else:
-                text = str(content)
-            text = " ".join(text.split())
-            if text:
-                return text[:80]
-    except Exception:
-        pass
-    return ""
-
-
 def map_event(event: str, data: dict) -> dict | None:
     sid = data.get("session_id")
     if not sid:
@@ -95,9 +56,11 @@ def map_event(event: str, data: dict) -> dict | None:
         return {"event": "prompt_submit", "session_id": sid,
                 "project": _project(data.get("cwd"))}
     if event == "stop":
+        # Send the transcript path; the daemon polls it for the final reply,
+        # which may be flushed shortly AFTER this hook fires.
         return {"event": "stop", "session_id": sid,
                 "project": _project(data.get("cwd")),
-                "message": _last_assistant_text(data.get("transcript_path"))}
+                "transcript_path": data.get("transcript_path", "")}
     name = _SIMPLE.get(event)
     if name is None:
         return None

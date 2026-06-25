@@ -82,40 +82,11 @@ def test_map_prompt_submit_includes_project():
     assert out == {"event": "prompt_submit", "session_id": "a", "project": "webapp"}
 
 
-def test_map_stop_includes_message_from_transcript(tmp_path):
-    t = tmp_path / "t.jsonl"
-    t.write_text(
-        '{"type":"user","message":{"role":"user","content":"hi"}}\n'
-        '{"type":"assistant","message":{"role":"assistant",'
-        '"content":[{"type":"text","text":"Merged and live"}]}}\n')
+def test_map_stop_passes_transcript_path(tmp_path):
     out = hook.map_event("stop", {"session_id": "a", "cwd": "/x/webapp",
-                                  "transcript_path": str(t)})
-    assert out["event"] == "stop"
-    assert out["project"] == "webapp"
-    assert out["message"] == "Merged and live"
-
-
-def test_last_assistant_text_missing_file():
-    assert hook._last_assistant_text("/no/such/file.jsonl") == ""
-
-
-def test_last_assistant_text_collapses_and_caps(tmp_path):
-    t = tmp_path / "t.jsonl"
-    long = " ".join(["word"] * 60)
-    t.write_text('{"type":"assistant","message":{"role":"assistant",'
-                 '"content":[{"type":"text","text":"' + long + '"}]}}\n')
-    out = hook._last_assistant_text(str(t))
-    assert len(out) <= 80
-    assert "\n" not in out
-
-
-def test_last_assistant_text_skips_trailing_non_text(tmp_path):
-    # last assistant message ends with a tool_use block but has text too
-    t = tmp_path / "t.jsonl"
-    t.write_text('{"type":"assistant","message":{"role":"assistant","content":['
-                 '{"type":"text","text":"Done here"},'
-                 '{"type":"tool_use","name":"Bash","input":{}}]}}\n')
-    assert hook._last_assistant_text(str(t)) == "Done here"
+                                  "transcript_path": "/x/t.jsonl"})
+    assert out == {"event": "stop", "session_id": "a",
+                   "project": "webapp", "transcript_path": "/x/t.jsonl"}
 
 
 def test_map_notification_includes_project():

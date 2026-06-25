@@ -53,3 +53,22 @@ def test_socket_event_reaches_store(tmp_path):
 
     snap = asyncio.run(scenario())
     assert snap["running"] == 1
+
+
+def test_speak_pushes_reply_from_transcript(tmp_path):
+    t = tmp_path / "t.jsonl"
+    t.write_text(
+        json.dumps({"type": "user",
+                    "message": {"role": "user", "content": "go"}}) + "\n" +
+        json.dumps({"type": "assistant",
+                    "message": {"role": "assistant",
+                                "content": [{"type": "text", "text": "All done"}]}}) + "\n")
+
+    async def scenario():
+        s = SessionStore()
+        b = daemon.Bridge(s, FakeTransport(), "/tmp/unused.sock")
+        await b._speak("buddy", str(t))
+        return s.snapshot()
+
+    snap = asyncio.run(scenario())
+    assert snap["entries"][-1] == "[buddy] All done"
