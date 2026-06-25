@@ -65,17 +65,22 @@ class Bridge:
                     payload.get("project", ""), payload["transcript_path"]))
         writer.close()
 
-    async def _speak(self, project, path, tries=25, interval=0.1):
+    async def _speak(self, project, path, tries=30, interval=0.15):
+        # Poll for the turn's final reply. Require the same non-empty value on
+        # two consecutive reads so a transient mid-flush read (an intermediate
+        # text before its tool_use lands) can't be pushed by mistake.
         loop = asyncio.get_event_loop()
+        prev = None
         for _ in range(tries):
             try:
                 text = await loop.run_in_executor(None, transcript.last_reply, path)
             except Exception:
                 text = ""
-            if text:
+            if text and text == prev:
                 self.store.push_message(project, text)
                 self._dirty.set()
                 return
+            prev = text
             await asyncio.sleep(interval)
 
     async def serve(self):
