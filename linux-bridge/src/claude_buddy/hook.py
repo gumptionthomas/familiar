@@ -1,35 +1,14 @@
 import json
 import os
-import re
 import socket
 import sys
 
 from .config import load
 
-# Strip a leading "cd <path>" statement so Bash detail shows the real command,
-# not the directory change most commands start with. The separator may be
-# &&, ;, or a newline (multi-line commands) — [ \t]* before it so a trailing
-# newline isn't pre-consumed.
-_CD_PREFIX = re.compile(
-    r"^cd\s+(?:\"[^\"]*\"|'[^']*'|\S+)[ \t]*(?:&&|;|\n)[ \t\n]*")
-
 _SIMPLE = {
     "session-start": "session_start",
     "session-end": "session_end",
 }
-
-
-def _detail(tool_input: dict) -> str:
-    if not isinstance(tool_input, dict):
-        return ""
-    if "command" in tool_input:
-        cmd = _CD_PREFIX.sub("", str(tool_input["command"]).lstrip())
-        # Collapse remaining whitespace/newlines so a multi-line command shows
-        # as one readable line.
-        return " ".join(cmd.split())[:40]
-    if "file_path" in tool_input:
-        return os.path.basename(str(tool_input["file_path"]))
-    return ""
 
 
 def _project(cwd) -> str:
@@ -45,9 +24,9 @@ def map_event(event: str, data: dict) -> dict | None:
     if not sid:
         return None
     if event == "post-tool":
+        # Tool calls don't add a feed line anymore (too noisy); they only keep
+        # the session busy / clear the waiting alert. Just carry the project.
         return {"event": "post_tool", "session_id": sid,
-                "tool": data.get("tool_name", "tool"),
-                "detail": _detail(data.get("tool_input", {})),
                 "project": _project(data.get("cwd"))}
     if event == "notification":
         # Claude Code fires Notification both for permission prompts and for the
