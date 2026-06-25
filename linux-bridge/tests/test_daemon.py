@@ -12,7 +12,9 @@ def test_apply_event_dispatches():
                            "tool": "Bash", "detail": "ls"})
     snap = s.snapshot()
     assert snap["running"] == 1
-    assert snap["entries"][0] == "Bash: ls"
+    # newest entry is last; "thinking..." from prompt_submit precedes it
+    assert snap["entries"][-1] == "Bash: ls"
+    assert "thinking..." in snap["entries"][0]
 
 
 def test_apply_event_ignores_unknown():

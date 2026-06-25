@@ -15,6 +15,10 @@ def _line(tool: str, detail: str, project: str = "") -> str:
     return f"[{project}] {core}" if project else core
 
 
+def _tagged(project: str, text: str) -> str:
+    return f"[{project}] {text}" if project else text
+
+
 class SessionStore:
     def __init__(self, stale_after: float = 300.0, max_entries: int = 6,
                  clock=time.monotonic):
@@ -36,10 +40,19 @@ class SessionStore:
     def session_start(self, sid: str) -> None:
         self._touch(sid)
 
-    def prompt_submit(self, sid: str) -> None:
+    def _push(self, text: str) -> None:
+        self._recent.insert(0, text)
+        del self._recent[self._max_entries:]
+
+    def prompt_submit(self, sid: str, project: str = "") -> None:
         s = self._touch(sid)
         s.running = True
         s.waiting = False
+        if project:
+            s.project = project
+        # Show "thinking..." the instant a prompt is submitted, so the feed
+        # isn't stuck on the previous turn's last command.
+        self._push(_tagged(s.project, "thinking..."))
 
     def post_tool(self, sid: str, tool: str, detail: str = "",
                   project: str = "") -> None:
@@ -57,11 +70,16 @@ class SessionStore:
         if project:
             s.project = project
 
-    def stop(self, sid: str) -> None:
+    def stop(self, sid: str, project: str = "", message: str = "") -> None:
         s = self._touch(sid)
         s.running = False
         s.waiting = False
         self._completed = True
+        if project:
+            s.project = project
+        # The buddy "speaks" my reply: push the assistant message snippet.
+        if message:
+            self._push(_tagged(s.project, message))
 
     def session_end(self, sid: str) -> None:
         self._sessions.pop(sid, None)

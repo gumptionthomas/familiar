@@ -19,10 +19,28 @@ def test_idle_when_empty():
     assert snap["completed"] is False
 
 
-def test_msg_working_fallback_when_running_no_activity():
+def test_prompt_submit_shows_thinking():
     s = SessionStore(clock=FakeClock())
-    s.prompt_submit("a")
-    assert s.snapshot()["msg"] == "working"
+    s.prompt_submit("a", project="buddy")
+    snap = s.snapshot()
+    assert snap["entries"][-1] == "[buddy] thinking..."
+    assert snap["msg"] == "[buddy] thinking..."
+
+
+def test_stop_pushes_assistant_message():
+    s = SessionStore(clock=FakeClock())
+    s.prompt_submit("a", project="buddy")
+    s.stop("a", project="buddy", message="Merged and live")
+    snap = s.snapshot()
+    assert snap["entries"][-1] == "[buddy] Merged and live"
+    assert snap["completed"] is True
+
+
+def test_stop_without_message_pushes_nothing_extra():
+    s = SessionStore(clock=FakeClock())
+    s.post_tool("a", "Bash", "ls")
+    s.stop("a")          # no message
+    assert s.snapshot()["entries"] == ["Bash: ls"]
 
 
 def test_running_after_prompt():
@@ -36,12 +54,11 @@ def test_running_after_prompt():
 
 def test_post_tool_sets_activity_and_keeps_running():
     s = SessionStore(clock=FakeClock())
-    s.prompt_submit("a")
     s.post_tool("a", "Bash", "git push")
     snap = s.snapshot()
     assert snap["running"] == 1
     assert snap["msg"] == "Bash: git push"
-    assert snap["entries"][0] == "Bash: git push"
+    assert snap["entries"][-1] == "Bash: git push"
 
 
 def test_post_tool_tags_project():
