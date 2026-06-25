@@ -5,7 +5,7 @@ import os
 import sys
 from datetime import datetime
 
-from . import heartbeat
+from . import heartbeat, transcript
 from .config import load
 from .state import SessionStore
 from .transport import StdoutTransport
@@ -19,8 +19,7 @@ _DISPATCH = {
         p.get("project", "")),
     "notification": lambda s, p: s.notification(
         p["session_id"], p.get("project", "")),
-    "stop": lambda s, p: s.stop(
-        p["session_id"], p.get("project", ""), p.get("message", "")),
+    "stop": lambda s, p: s.stop(p["session_id"], p.get("project", "")),
     "session_end": lambda s, p: s.session_end(p["session_id"]),
 }
 
@@ -54,11 +53,30 @@ class Bridge:
             if not line.strip():
                 continue
             try:
-                apply_event(self.store, json.loads(line))
-                self._dirty.set()
+                payload = json.loads(line)
             except Exception:
-                pass
+                continue
+            apply_event(self.store, payload)
+            self._dirty.set()
+            if payload.get("event") == "stop" and payload.get("transcript_path"):
+                # The final reply may land in the transcript just after Stop;
+                # poll for it off the hook's path and push it when it appears.
+                asyncio.create_task(self._speak(
+                    payload.get("project", ""), payload["transcript_path"]))
         writer.close()
+
+    async def _speak(self, project, path, tries=25, interval=0.1):
+        loop = asyncio.get_event_loop()
+        for _ in range(tries):
+            try:
+                text = await loop.run_in_executor(None, transcript.last_reply, path)
+            except Exception:
+                text = ""
+            if text:
+                self.store.push_message(project, text)
+                self._dirty.set()
+                return
+            await asyncio.sleep(interval)
 
     async def serve(self):
         if os.path.exists(self.socket_path):
