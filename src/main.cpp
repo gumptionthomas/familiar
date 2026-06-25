@@ -1001,14 +1001,18 @@ void loop() {
 
   if ((int32_t)(now - oneShotUntil) >= 0) activeState = baseState;
 
-  // LED: pulse on attention until acknowledged. Any button tap silences the
-  // blink for the current alert; the screen still shows it's pending, and the
-  // blink re-arms automatically on the next new attention episode.
+  // LED: pulse on attention until acknowledged. While the LED is blinking, a
+  // button press ONLY silences it — the press is swallowed so it doesn't also
+  // do its usual action. The screen still shows it's pending; the blink
+  // re-arms automatically on the next new attention episode.
   static bool attentionAcked = false;
+  bool ledBlinking = activeState == P_ATTENTION && settings().led && !attentionAcked;
   if (activeState != P_ATTENTION) {
     attentionAcked = false;                     // re-arm once the alert clears
-  } else if (M5.BtnA.wasPressed() || M5.BtnB.wasPressed()) {
-    attentionAcked = true;                      // tap A or B to dismiss the blink
+  } else if (ledBlinking && (M5.BtnA.wasPressed() || M5.BtnB.wasPressed())) {
+    attentionAcked = true;                      // dismiss-only: silence + swallow
+    if (M5.BtnA.wasPressed()) swallowBtnA = true;
+    if (M5.BtnB.wasPressed()) swallowBtnB = true;
   }
   if (activeState == P_ATTENTION && settings().led && !attentionAcked) {
     digitalWrite(LED_PIN, (now / 400) % 2 ? LOW : HIGH);
@@ -1062,8 +1066,9 @@ void loop() {
   // AXP power button (left side): short-press toggles screen off.
   // Long-press (6s) still powers off the device via AXP hardware.
   if (M5.Axp.GetBtnPress() == 0x02) {
-    attentionAcked = true;          // power tap also dismisses the attention blink
-    if (screenOff) {
+    if (ledBlinking) {
+      attentionAcked = true;        // dismiss-only: silence the blink, no toggle
+    } else if (screenOff) {
       wake();
     } else {
       M5.Axp.SetLDO2(false);
