@@ -10,11 +10,6 @@ class _Session:
     project: str = ""
 
 
-def _line(tool: str, detail: str, project: str = "") -> str:
-    core = f"{tool}: {detail}" if detail else tool
-    return f"[{project}] {core}" if project else core
-
-
 def _tagged(project: str, text: str) -> str:
     return f"[{project}] {text}" if project else text
 
@@ -54,15 +49,14 @@ class SessionStore:
         # isn't stuck on the previous turn's last command.
         self._push(_tagged(s.project, "thinking..."))
 
-    def post_tool(self, sid: str, tool: str, detail: str = "",
-                  project: str = "") -> None:
+    def post_tool(self, sid: str, project: str = "") -> None:
+        # No feed line — tool calls are noise. Just keep the session busy and
+        # clear any waiting alert (you've approved and work resumed).
         s = self._touch(sid)
         s.running = True
         s.waiting = False
         if project:
             s.project = project
-        self._recent.insert(0, _line(tool, detail, project))
-        del self._recent[self._max_entries:]
 
     def notification(self, sid: str, project: str = "") -> None:
         s = self._touch(sid)

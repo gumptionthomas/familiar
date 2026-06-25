@@ -9,12 +9,11 @@ def test_apply_event_dispatches():
     s = SessionStore()
     daemon.apply_event(s, {"event": "prompt_submit", "session_id": "a"})
     daemon.apply_event(s, {"event": "post_tool", "session_id": "a",
-                           "tool": "Bash", "detail": "ls"})
+                           "project": "buddy"})
     snap = s.snapshot()
     assert snap["running"] == 1
-    # newest entry is last; "thinking..." from prompt_submit precedes it
-    assert snap["entries"][-1] == "Bash: ls"
-    assert "thinking..." in snap["entries"][0]
+    # post_tool adds no feed line; only "thinking..." from prompt_submit shows
+    assert snap["entries"] == ["thinking..."]
 
 
 def test_apply_event_ignores_unknown():

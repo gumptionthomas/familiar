@@ -4,70 +4,29 @@ import threading
 from claude_buddy import hook
 
 
-def test_map_post_tool_extracts_detail():
+def test_map_post_tool_carries_only_project():
+    # tool/detail are gone — post_tool just keeps state, carrying the project
     data = {"session_id": "a", "tool_name": "Bash",
-            "tool_input": {"command": "git push"}}
+            "tool_input": {"command": "git push"}, "cwd": "/home/me/dev/webapp"}
     out = hook.map_event("post-tool", data)
-    assert out == {"event": "post_tool", "session_id": "a",
-                   "tool": "Bash", "detail": "git push", "project": ""}
-
-
-def test_map_post_tool_strips_cd_prefix():
-    data = {"session_id": "a", "tool_name": "Bash",
-            "tool_input": {"command": "cd /home/me/webapp && git push"}}
-    out = hook.map_event("post-tool", data)
-    assert out["detail"] == "git push"
-
-
-def test_map_post_tool_bare_cd_kept():
-    data = {"session_id": "a", "tool_name": "Bash",
-            "tool_input": {"command": "cd /home/me/webapp"}}
-    out = hook.map_event("post-tool", data)
-    assert out["detail"] == "cd /home/me/webapp"
-
-
-def test_map_post_tool_strips_cd_newline():
-    data = {"session_id": "a", "tool_name": "Bash",
-            "tool_input": {"command": "cd /home/me/webapp\ngit status"}}
-    out = hook.map_event("post-tool", data)
-    assert out["detail"] == "git status"
-
-
-def test_map_post_tool_collapses_multiline():
-    data = {"session_id": "a", "tool_name": "Bash",
-            "tool_input": {"command": "cd /x\ngit add .\ngit commit"}}
-    out = hook.map_event("post-tool", data)
-    assert out["detail"] == "git add . git commit"
-
-
-def test_map_post_tool_file_path_detail():
-    data = {"session_id": "a", "tool_name": "Read",
-            "tool_input": {"file_path": "/x/main.cpp"}}
-    out = hook.map_event("post-tool", data)
-    assert out == {"event": "post_tool", "session_id": "a",
-                   "tool": "Read", "detail": "main.cpp", "project": ""}
-
-
-def test_map_post_tool_project_from_cwd():
-    data = {"session_id": "a", "tool_name": "Bash", "tool_input": {"command": "ls"},
-            "cwd": "/home/me/dev/webapp"}
-    out = hook.map_event("post-tool", data)
-    assert out["project"] == "webapp"
+    assert out == {"event": "post_tool", "session_id": "a", "project": "webapp"}
 
 
 def test_map_post_tool_project_truncated_to_12():
-    data = {"session_id": "a", "tool_name": "Edit", "tool_input": {},
-            "cwd": "/home/me/claude-desktop-buddy"}
+    data = {"session_id": "a", "cwd": "/home/me/claude-desktop-buddy"}
     out = hook.map_event("post-tool", data)
     assert out["project"] == "claude-deskt"
     assert len(out["project"]) <= 12
 
 
 def test_map_post_tool_trailing_slash_cwd():
-    data = {"session_id": "a", "tool_name": "Bash", "tool_input": {},
-            "cwd": "/home/me/webapp/"}
-    out = hook.map_event("post-tool", data)
+    out = hook.map_event("post-tool", {"session_id": "a", "cwd": "/home/me/webapp/"})
     assert out["project"] == "webapp"
+
+
+def test_map_post_tool_no_cwd():
+    out = hook.map_event("post-tool", {"session_id": "a"})
+    assert out == {"event": "post_tool", "session_id": "a", "project": ""}
 
 
 def test_map_simple_events():

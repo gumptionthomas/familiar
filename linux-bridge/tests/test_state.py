@@ -29,11 +29,11 @@ def test_prompt_submit_shows_thinking():
 
 def test_stop_pulses_completed_no_message():
     s = SessionStore(clock=FakeClock())
-    s.post_tool("a", "Bash", "ls")
-    s.stop("a")          # message arrives later via push_message
+    s.prompt_submit("a", project="buddy")   # pushes "[buddy] thinking..."
+    s.stop("a")          # the reply arrives later via push_message
     snap = s.snapshot()
     assert snap["completed"] is True
-    assert snap["entries"] == ["Bash: ls"]
+    assert snap["entries"] == ["[buddy] thinking..."]
 
 
 def test_push_message_speaks_tagged_reply():
@@ -53,27 +53,13 @@ def test_running_after_prompt():
     assert snap["running"] == 1
 
 
-def test_post_tool_sets_activity_and_keeps_running():
+def test_post_tool_keeps_running_no_feed_line():
     s = SessionStore(clock=FakeClock())
-    s.post_tool("a", "Bash", "git push")
+    s.post_tool("a")
     snap = s.snapshot()
     assert snap["running"] == 1
-    assert snap["msg"] == "Bash: git push"
-    assert snap["entries"][-1] == "Bash: git push"
-
-
-def test_post_tool_tags_project():
-    s = SessionStore(clock=FakeClock())
-    s.post_tool("a", "Edit", "main.cpp", project="buddy")
-    snap = s.snapshot()
-    assert snap["entries"][0] == "[buddy] Edit: main.cpp"
-    assert snap["msg"] == "[buddy] Edit: main.cpp"
-
-
-def test_post_tool_no_project_unprefixed():
-    s = SessionStore(clock=FakeClock())
-    s.post_tool("a", "Bash", "ls")
-    assert s.snapshot()["entries"][0] == "Bash: ls"
+    assert snap["entries"] == []      # tool calls no longer add a feed line
+    assert snap["msg"] == "working"   # busy, but nothing to show
 
 
 def test_notification_sets_waiting_cleared_by_activity():
@@ -81,7 +67,7 @@ def test_notification_sets_waiting_cleared_by_activity():
     s.prompt_submit("a")
     s.notification("a")
     assert s.snapshot()["waiting"] == 1
-    s.post_tool("a", "Read", "main.cpp")
+    s.post_tool("a")      # a tool ran -> you've approved, alert clears
     assert s.snapshot()["waiting"] == 0
 
 
@@ -112,20 +98,20 @@ def test_waiting_multiple_sessions_each_get_a_line():
     assert "webapp: needs you" in snap["entries"]
 
 
-def test_waiting_pinned_above_concurrent_activity():
+def test_waiting_alert_with_concurrent_busy_session():
     s = SessionStore(clock=FakeClock())
     s.notification("a", project="webapp")
-    # a busy *other* session's activity arrives while we're waiting
-    s.post_tool("b", "Bash", "git push", project="api")
+    # a busy *other* session runs a tool while we're waiting — adds no feed line
+    s.post_tool("b", project="api")
     snap = s.snapshot()
-    # alert stays the newest/most-prominent line, activity sits below it
-    assert snap["entries"][-1] == "webapp: needs you"
-    assert "[api] Bash: git push" in snap["entries"]
+    assert snap["entries"] == ["webapp: needs you"]   # only the alert shows
+    assert snap["running"] == 1
+    assert snap["waiting"] == 1
 
 
 def test_post_tool_project_remembered_for_later_waiting():
     s = SessionStore(clock=FakeClock())
-    s.post_tool("a", "Bash", "ls", project="webapp")
+    s.post_tool("a", project="webapp")
     s.notification("a")   # no project on this event
     assert s.snapshot()["entries"][-1] == "webapp: needs you"
 
@@ -178,9 +164,9 @@ def test_sweep_prunes_stale():
 
 def test_entries_capped_oldest_first():
     s = SessionStore(max_entries=2, clock=FakeClock())
-    s.post_tool("a", "Read", "1")
-    s.post_tool("a", "Read", "2")
-    s.post_tool("a", "Read", "3")
+    s.push_message("", "1")
+    s.push_message("", "2")
+    s.push_message("", "3")
     entries = s.snapshot()["entries"]
     # capped to the 2 newest, emitted oldest-first (newest last)
-    assert entries == ["Read: 2", "Read: 3"]
+    assert entries == ["2", "3"]
