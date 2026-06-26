@@ -14,6 +14,8 @@ class Config:
     address: str | None = None
     owner: str = ""
     socket_path: str = ""
+    api_key: str = ""
+    model: str = "claude-haiku-4-5-20251001"
 
 
 def _default_config_path() -> Path:
@@ -31,4 +33,7 @@ def load(path: Path | None = None) -> Config:
         address=data.get("address"),
         owner=data.get("owner", ""),
         socket_path=data.get("socket") or _default_socket(),
+        # api_key enables haiku mode; falls back to the standard env var.
+        api_key=data.get("api_key") or os.environ.get("ANTHROPIC_API_KEY", ""),
+        model=data.get("model") or "claude-haiku-4-5-20251001",
     )

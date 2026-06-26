@@ -908,15 +908,11 @@ void drawHUD() {
     return;
   }
 
-  // Wrap all transcript lines into a flat display buffer. Track which
-  // transcript index each display row came from, so we can dim older ones.
+  // Wrap all transcript lines into a flat display buffer.
   static char disp[32][24];
-  static uint8_t srcOf[32];
   uint8_t nDisp = 0;
   for (uint8_t i = 0; i < tama.nLines && nDisp < 32; i++) {
-    uint8_t got = wrapInto(tama.lines[i], &disp[nDisp], 32 - nDisp, WIDTH);
-    for (uint8_t j = 0; j < got; j++) srcOf[nDisp + j] = i;
-    nDisp += got;
+    nDisp += wrapInto(tama.lines[i], &disp[nDisp], 32 - nDisp, WIDTH);
   }
 
   uint8_t maxBack = (nDisp > SHOW) ? (nDisp - SHOW) : 0;
@@ -924,13 +920,13 @@ void drawHUD() {
 
   int end = (int)nDisp - msgScroll;
   int start = end - SHOW; if (start < 0) start = 0;
-  uint8_t newest = tama.nLines - 1;
+  // The content is a unit (a haiku, or the reply) — render it uniformly bright;
+  // dim only when scrolled back into history.
+  bool live = (msgScroll == 0);
   for (int i = 0; start + i < end; i++) {
-    uint8_t row = start + i;
-    bool fresh = (srcOf[row] == newest) && (msgScroll == 0);
-    spr.setTextColor(fresh ? p.text : p.textDim, p.bg);
+    spr.setTextColor(live ? p.text : p.textDim, p.bg);
     spr.setCursor(4, H - AREA + 2 + i * LH);
-    spr.print(disp[row]);
+    spr.print(disp[start + i]);
   }
   if (msgScroll > 0) {
     spr.setTextColor(p.body, p.bg);

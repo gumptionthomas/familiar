@@ -1,5 +1,5 @@
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -8,16 +8,28 @@ class _Session:
     waiting: bool = False
     last_seen: float = 0.0
     project: str = ""
+    activity: list[str] = field(default_factory=list)  # haiku material, this turn
+    reply_gist: str = ""
+
+
+def _activity_label(tool: str, file: str) -> str:
+    if file:
+        return f"{tool} {file}"
+    if tool == "Bash":
+        return "ran a command"
+    return tool or "did something"
 
 
 class SessionStore:
     def __init__(self, stale_after: float = 300.0, max_entries: int = 6,
-                 clock=time.monotonic):
+                 clock=time.monotonic, haiku_mode: bool = False):
         self._sessions: dict[str, _Session] = {}
         self._stale_after = stale_after
         self._max_entries = max_entries
         self._clock = clock
-        self._recent: list[tuple[str, str]] = []   # (code, text), newest first
+        self._haiku_mode = haiku_mode
+        self._haiku: list[str] = []            # haiku-mode display (3 lines)
+        self._recent: list[tuple[str, str]] = []   # reply-mode display, newest first
         self._completed = False
 
     def _touch(self, sid: str) -> _Session:
@@ -41,18 +53,24 @@ class SessionStore:
         s.waiting = False
         if project:
             s.project = project
-        # Show "thinking..." the instant a prompt is submitted, so the feed
-        # isn't stuck on the previous turn's last command.
-        self._push(s.project, "thinking...")
+        s.activity = []          # fresh turn material
+        s.reply_gist = ""
+        if not self._haiku_mode:
+            self._push(s.project, "thinking...")
 
-    def post_tool(self, sid: str, project: str = "") -> None:
-        # No feed line — tool calls are noise. Just keep the session busy and
-        # clear any waiting alert (you've approved and work resumed).
+    def post_tool(self, sid: str, project: str = "",
+                  tool: str = "", file: str = "") -> None:
+        # No feed line — tool calls keep the session busy, clear the waiting
+        # alert, and accrue material for the next haiku.
         s = self._touch(sid)
         s.running = True
         s.waiting = False
         if project:
             s.project = project
+        label = _activity_label(tool, file)
+        if label and (not s.activity or s.activity[-1] != label):
+            s.activity.append(label)
+            del s.activity[:-8]   # keep the last 8
 
     def notification(self, sid: str, project: str = "") -> None:
         s = self._touch(sid)
@@ -68,10 +86,43 @@ class SessionStore:
         if project:
             s.project = project
 
+    def record_reply(self, sid: str, gist: str) -> None:
+        # The turn's reply, kept as haiku material (not displayed in haiku mode).
+        self._touch(sid).reply_gist = " ".join(str(gist).split())[:200]
+
     def push_message(self, project: str, text: str) -> None:
-        # The buddy "speaks": pushed by the daemon once the transcript has the
-        # turn's final assistant message.
+        # Reply-mode (no api_key) display: the buddy "speaks" the reply snippet.
         self._push(project, text)
+
+    def set_haiku(self, lines) -> None:
+        self._haiku = [str(x) for x in lines][:3]
+
+    def digest(self, focus_sid: str = "") -> str:
+        parts = []
+        foc = self._sessions.get(focus_sid)
+        if foc:
+            parts.append(self._session_digest("Focus", foc))
+        for sid, s in self._sessions.items():
+            if sid == focus_sid or not (s.running or s.waiting):
+                continue
+            parts.append(self._session_digest("Also", s))
+        return "\n".join(p for p in parts if p)
+
+    def _session_digest(self, prefix: str, s: _Session) -> str:
+        bits = []
+        if s.activity:
+            bits.append(", ".join(s.activity))
+        if s.reply_gist:
+            bits.append(f'reply: "{s.reply_gist}"')
+        if s.waiting:
+            bits.append("waiting for permission")
+        body = "; ".join(bits) if bits else "active"
+        return f"{prefix} [{s.project or '?'}]: {body}"
+
+    def latest_running(self) -> str:
+        cands = [(s.last_seen, sid) for sid, s in self._sessions.items()
+                 if s.running]
+        return max(cands)[1] if cands else ""
 
     def session_end(self, sid: str) -> None:
         self._sessions.pop(sid, None)
@@ -89,13 +140,12 @@ class SessionStore:
         completed = self._completed
         self._completed = False
 
-        # (code, text) oldest-first: the firmware treats the LAST entry as
-        # newest (drawHUD highlights lines[n-1] and data.h checks
-        # lines[n-1] == msg).
-        combined = list(reversed(self._recent))
-        # Pin one "needs you" per waiting project at the newest end so the alert
-        # stays the most-prominent line while a prompt is pending. Recency
-        # order, deduped by project.
+        # (code, text) oldest-first; firmware treats the LAST entry as newest.
+        if self._haiku_mode:
+            combined = [("", ln) for ln in self._haiku]   # haiku is aggregate -> untagged
+        else:
+            combined = list(reversed(self._recent))
+        # Pin one "needs you" per waiting project at the newest end, deduped.
         seen = set()
         for s in sorted(waiters, key=lambda x: x.last_seen):
             key = s.project or "\0"
@@ -105,8 +155,8 @@ class SessionStore:
             combined.append((s.project, "needs you"))
         combined = combined[-self._max_entries:]
 
-        # Tag with the project code only when the feed spans 2+ projects — a
-        # single-project feed needs no disambiguation.
+        # Tag with the project code only when the displayed feed spans 2+
+        # projects (haiku lines have no code, so they're always untagged).
         multi = len({c for c, _ in combined if c}) >= 2
         entries = [f"[{c}] {t}" if (multi and c) else t for c, t in combined]
 

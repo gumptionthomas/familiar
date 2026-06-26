@@ -30,6 +30,13 @@ bluetoothctl
 ```toml
 address = "AA:BB:CC:DD:EE:FF"
 owner   = "YourName"
+
+# Optional — haiku mode: the buddy narrates activity as a haiku written by
+# Claude Haiku (one aggregate haiku across active sessions, refreshed each
+# turn). Falls back to $ANTHROPIC_API_KEY if api_key is omitted. Without a key,
+# the buddy shows the plain reply snippet instead.
+# api_key = "sk-ant-..."
+# model   = "claude-haiku-4-5-20251001"
 ```
 
 ## 3. Install the hooks
@@ -105,6 +112,10 @@ systemctl --user restart claude-buddy
 | Claude Code | Pet |
 |---|---|
 | actively working (running) | busy |
-| permission prompt / notification | attention (LED blinks) |
-| turn finished | celebrate |
+| permission prompt / notification | attention (LED blinks) + `needs you` |
+| turn finished | celebrate; text refreshes (haiku, or reply snippet) |
 | quiet | idle / sleep |
+
+In haiku mode the text area shows one aggregate haiku blending all active
+sessions, weighted to the turn that just ended; `needs you` alerts still pin
+on top. Without an API key it shows the closing reply snippet instead.

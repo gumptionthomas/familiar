@@ -4,12 +4,21 @@ import threading
 from claude_buddy import hook
 
 
-def test_map_post_tool_carries_only_project():
-    # tool/detail are gone — post_tool just keeps state, carrying the project code
+def test_map_post_tool_carries_tool_and_no_command():
+    # tool kind + project, but NO command text (Bash has no file_path)
     data = {"session_id": "a", "tool_name": "Bash",
             "tool_input": {"command": "git push"}, "cwd": "/home/me/dev/webapp"}
     out = hook.map_event("post-tool", data)
-    assert out == {"event": "post_tool", "session_id": "a", "project": "weba"}
+    assert out == {"event": "post_tool", "session_id": "a", "project": "weba",
+                   "tool": "Bash", "file": ""}
+
+
+def test_map_post_tool_file_basename_only():
+    data = {"session_id": "a", "tool_name": "Edit",
+            "tool_input": {"file_path": "/home/me/dev/webapp/src/auth.py"}}
+    out = hook.map_event("post-tool", data)
+    assert out["tool"] == "Edit"
+    assert out["file"] == "auth.py"   # basename only, no path
 
 
 def test_map_post_tool_project_code_initials():
@@ -32,7 +41,8 @@ def test_map_post_tool_trailing_slash_cwd():
 
 def test_map_post_tool_no_cwd():
     out = hook.map_event("post-tool", {"session_id": "a"})
-    assert out == {"event": "post_tool", "session_id": "a", "project": ""}
+    assert out == {"event": "post_tool", "session_id": "a", "project": "",
+                   "tool": "tool", "file": ""}
 
 
 def test_map_simple_events():

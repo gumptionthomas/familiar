@@ -64,11 +64,42 @@ def test_speak_pushes_reply_from_transcript(tmp_path):
                                 "content": [{"type": "text", "text": "All done"}]}}) + "\n")
 
     async def scenario():
-        s = SessionStore()
+        s = SessionStore()   # reply mode (no compose)
         b = daemon.Bridge(s, FakeTransport(), "/tmp/unused.sock")
-        await b._speak("buddy", str(t))
+        await b._on_stop("s1", "buddy", str(t))
         return s.snapshot()
 
     snap = asyncio.run(scenario())
     # single project in the feed -> untagged
     assert snap["entries"][-1] == "All done"
+
+
+def test_haiku_tick_composes_and_sets(tmp_path):
+    captured = {}
+
+    async def compose(digest):
+        captured["digest"] = digest
+        return ["files mend now", "a branch returns home", "the tests all pass"]
+
+    async def scenario():
+        s = SessionStore(haiku_mode=True)
+        s.prompt_submit("s1", project="GH")
+        s.post_tool("s1", project="GH", tool="Edit", file="auth.py")
+        s.stop("s1", project="GH")
+        b = daemon.Bridge(s, FakeTransport(), "/tmp/unused.sock", compose=compose)
+        await b._haiku_tick("s1", force=True)
+        return s.snapshot()
+
+    snap = asyncio.run(scenario())
+    assert snap["entries"] == ["files mend now", "a branch returns home", "the tests all pass"]
+    assert "auth.py" in captured["digest"]
+
+
+def test_haiku_tick_no_compose_is_noop():
+    async def scenario():
+        s = SessionStore(haiku_mode=True)
+        b = daemon.Bridge(s, FakeTransport(), "/tmp/unused.sock", compose=None)
+        await b._haiku_tick("s1", force=True)
+        return s.snapshot()
+
+    assert asyncio.run(scenario())["entries"] == []

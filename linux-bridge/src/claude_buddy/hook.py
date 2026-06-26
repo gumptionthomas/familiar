@@ -30,10 +30,14 @@ def map_event(event: str, data: dict) -> dict | None:
     if not sid:
         return None
     if event == "post-tool":
-        # Tool calls don't add a feed line anymore (too noisy); they only keep
-        # the session busy / clear the waiting alert. Just carry the project.
+        # Tool calls keep the session busy / clear the alert AND feed the haiku:
+        # tool kind + file basename only (no command text, no prompts).
+        ti = data.get("tool_input") or {}
+        fp = ti.get("file_path") if isinstance(ti, dict) else ""
+        file = os.path.basename(str(fp)) if fp else ""
         return {"event": "post_tool", "session_id": sid,
-                "project": _project(data.get("cwd"))}
+                "project": _project(data.get("cwd")),
+                "tool": data.get("tool_name", "tool"), "file": file}
     if event == "notification":
         # Claude Code fires Notification both for permission prompts and for the
         # ~60s "waiting for your input" idle nudge. Only the former is an alert;

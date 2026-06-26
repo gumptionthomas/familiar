@@ -183,3 +183,80 @@ def test_entries_capped_oldest_first():
     entries = s.snapshot()["entries"]
     # capped to the 2 newest, emitted oldest-first (newest last)
     assert entries == ["2", "3"]
+
+
+def test_haiku_mode_no_thinking():
+    s = SessionStore(clock=FakeClock(), haiku_mode=True)
+    s.prompt_submit("a", project="GH")
+    assert s.snapshot()["entries"] == []   # no "thinking..." in haiku mode
+
+
+def test_set_haiku_displays_three_lines():
+    s = SessionStore(clock=FakeClock(), haiku_mode=True)
+    s.set_haiku(["files mend", "a branch returns", "tests glow"])
+    snap = s.snapshot()
+    assert snap["entries"] == ["files mend", "a branch returns", "tests glow"]
+    assert snap["msg"] == "tests glow"
+
+
+def test_set_haiku_caps_three():
+    s = SessionStore(clock=FakeClock(), haiku_mode=True)
+    s.set_haiku(["1", "2", "3", "4"])
+    assert s.snapshot()["entries"] == ["1", "2", "3"]
+
+
+def test_haiku_with_waiting_alert_pins_untagged_single():
+    s = SessionStore(clock=FakeClock(), haiku_mode=True)
+    s.set_haiku(["a", "b", "c"])
+    s.notification("x", project="GH")
+    assert s.snapshot()["entries"][-1] == "needs you"   # single project -> untagged
+
+
+def test_post_tool_records_activity_into_digest():
+    s = SessionStore(clock=FakeClock())
+    s.prompt_submit("a", project="GH")
+    s.post_tool("a", project="GH", tool="Edit", file="auth.py")
+    s.post_tool("a", project="GH", tool="Bash")     # no file -> "ran a command"
+    d = s.digest("a")
+    assert "Focus [GH]" in d
+    assert "Edit auth.py" in d
+    assert "ran a command" in d
+
+
+def test_digest_has_reply_gist_no_raw_commands():
+    s = SessionStore(clock=FakeClock())
+    s.post_tool("a", project="GH", tool="Bash")     # command text never reaches state
+    s.record_reply("a", "race fixed, tests pass")
+    d = s.digest("a")
+    assert "ran a command" in d
+    assert 'reply: "race fixed, tests pass"' in d
+
+
+def test_digest_focus_then_also():
+    s = SessionStore(clock=FakeClock())
+    s.post_tool("a", project="GH", tool="Edit", file="auth.py")
+    s.post_tool("b", project="CDB", tool="Edit", file="README.md")
+    d = s.digest("a")
+    assert d.startswith("Focus [GH]")
+    assert "Also [CDB]" in d
+
+
+def test_prompt_submit_clears_prior_activity():
+    s = SessionStore(clock=FakeClock())
+    s.post_tool("a", project="GH", tool="Edit", file="old.py")
+    s.prompt_submit("a", project="GH")              # new turn
+    s.post_tool("a", project="GH", tool="Edit", file="new.py")
+    d = s.digest("a")
+    assert "new.py" in d
+    assert "old.py" not in d
+
+
+def test_latest_running():
+    clock = FakeClock()
+    s = SessionStore(clock=clock)
+    s.prompt_submit("a")
+    clock.t += 1
+    s.prompt_submit("b")
+    assert s.latest_running() == "b"
+    s.stop("b")
+    assert s.latest_running() == "a"
