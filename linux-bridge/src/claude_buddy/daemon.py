@@ -87,6 +87,16 @@ class Bridge:
 
     async def _on_stop(self, sid, project, path):
         reply = await self._await_reply(path)
+        # Credit this turn's output tokens (feeds the pet's level).
+        loop = asyncio.get_event_loop()
+        try:
+            toks = await loop.run_in_executor(
+                None, transcript.turn_output_tokens, path)
+        except Exception:
+            toks = 0
+        if toks:
+            self.store.add_tokens(toks)
+            self._dirty.set()
         if self._compose is not None:               # haiku mode
             if reply:
                 self.store.record_reply(sid, reply)

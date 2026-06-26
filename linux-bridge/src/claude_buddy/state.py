@@ -31,6 +31,7 @@ class SessionStore:
         self._haiku: list[str] = []            # haiku-mode display (3 lines)
         self._recent: list[tuple[str, str]] = []   # reply-mode display, newest first
         self._completed = False
+        self._tokens = 0   # cumulative output tokens since start; feeds pet level
 
     def _touch(self, sid: str) -> _Session:
         s = self._sessions.get(sid)
@@ -119,6 +120,12 @@ class SessionStore:
         body = "; ".join(bits) if bits else "active"
         return f"{prefix} [{s.project or '?'}]: {body}"
 
+    def add_tokens(self, n: int) -> None:
+        # Cumulative output tokens; the firmware tracks deltas and levels the
+        # pet every 50K (celebrating on level-up).
+        if isinstance(n, int) and n > 0:
+            self._tokens += n
+
     def latest_running(self) -> str:
         cands = [(s.last_seen, sid) for sid, s in self._sessions.items()
                  if s.running]
@@ -168,4 +175,5 @@ class SessionStore:
             "msg": msg,
             "entries": entries,
             "completed": completed,
+            "tokens": self._tokens,
         }

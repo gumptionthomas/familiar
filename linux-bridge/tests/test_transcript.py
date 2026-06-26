@@ -110,3 +110,42 @@ def test_missing_file():
 
 def test_empty_path():
     assert transcript.last_reply("") == ""
+
+
+def _assistant_tok(text, out_tokens, tool=False):
+    import json
+    blocks = [{"type": "text", "text": text}]
+    if tool:
+        blocks.append({"type": "tool_use", "name": "Bash", "input": {}})
+    return json.dumps({"type": "assistant", "message": {
+        "role": "assistant", "content": blocks,
+        "usage": {"output_tokens": out_tokens}}})
+
+
+def test_turn_output_tokens_sums_after_human(tmp_path):
+    p = _w(tmp_path,
+           _user("go"),
+           _assistant_tok("working", 100, tool=True),
+           _tool_result(),
+           _assistant_tok("done", 50))
+    assert transcript.turn_output_tokens(p) == 150
+
+
+def test_turn_output_tokens_ignores_prior_turn(tmp_path):
+    p = _w(tmp_path,
+           _user("first"), _assistant_tok("r1", 999),
+           _user("second"), _assistant_tok("r2", 42))
+    assert transcript.turn_output_tokens(p) == 42
+
+
+def test_turn_output_tokens_no_usage_is_zero(tmp_path):
+    p = _w(tmp_path, _user("go"), _assistant("no usage here"))
+    assert transcript.turn_output_tokens(p) == 0
+
+
+def test_turn_output_tokens_missing_file():
+    assert transcript.turn_output_tokens("/no/such.jsonl") == 0
+
+
+def test_turn_output_tokens_empty_path():
+    assert transcript.turn_output_tokens("") == 0

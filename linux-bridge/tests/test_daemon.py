@@ -103,3 +103,22 @@ def test_haiku_tick_no_compose_is_noop():
         return s.snapshot()
 
     assert asyncio.run(scenario())["entries"] == []
+
+
+def test_on_stop_credits_output_tokens(tmp_path):
+    t = tmp_path / "t.jsonl"
+    t.write_text(
+        json.dumps({"type": "user",
+                    "message": {"role": "user", "content": "go"}}) + "\n" +
+        json.dumps({"type": "assistant", "message": {
+            "role": "assistant",
+            "content": [{"type": "text", "text": "All done"}],
+            "usage": {"output_tokens": 321}}}) + "\n")
+
+    async def scenario():
+        s = SessionStore()   # reply mode (no compose)
+        b = daemon.Bridge(s, FakeTransport(), "/tmp/unused.sock")
+        await b._on_stop("s1", "buddy", str(t))
+        return s.snapshot()
+
+    assert asyncio.run(scenario())["tokens"] == 321
