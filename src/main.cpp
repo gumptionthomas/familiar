@@ -525,7 +525,7 @@ void drawPasskey() {
   spr.setTextSize(1);
   spr.setTextColor(p.textDim, p.bg);
   spr.setCursor(8, 56);  spr.print("BLUETOOTH PAIRING");
-  spr.setCursor(8, 184); spr.print("enter on desktop:");
+  spr.setCursor(8, 184); spr.print("enter to pair:");
   spr.setTextSize(3);
   spr.setTextColor(p.text, p.bg);
   char b[8]; snprintf(b, sizeof(b), "%06lu", (unsigned long)blePasskey());
@@ -548,17 +548,17 @@ void drawInfo() {
     _infoHeader(p, y, "ABOUT", infoPage);
     spr.setTextColor(p.textDim, p.bg);
     ln("I watch your Claude");
-    ln("desktop sessions.");
+    ln("Code sessions.");
     y += 6;
     ln("I sleep when nothing's");
     ln("happening, wake when");
     ln("you start working,");
-    ln("get impatient when");
-    ln("approvals pile up.");
+    ln("nudge you when a");
+    ln("prompt needs you.");
     y += 6;
     spr.setTextColor(p.text, p.bg);
-    ln("Press A on a prompt");
-    ln("to approve from here.");
+    ln("I speak in haiku");
+    ln("about your work.");
     y += 6;
     spr.setTextColor(p.textDim, p.bg);
     ln("18 species. Settings");
@@ -568,12 +568,13 @@ void drawInfo() {
     _infoHeader(p, y, "BUTTONS", infoPage);
     spr.setTextColor(p.text, p.bg);    ln("A   front");
     spr.setTextColor(p.textDim, p.bg); ln("    next screen");
-    ln("    approve prompt"); y += 4;
+    ln("    dismiss LED alert"); y += 4;
     spr.setTextColor(p.text, p.bg);    ln("B   right side");
-    spr.setTextColor(p.textDim, p.bg); ln("    next page");
-    ln("    deny prompt"); y += 4;
+    spr.setTextColor(p.textDim, p.bg); ln("    next page"); y += 4;
     spr.setTextColor(p.text, p.bg);    ln("hold A");
     spr.setTextColor(p.textDim, p.bg); ln("    menu"); y += 4;
+    spr.setTextColor(p.text, p.bg);    ln("shake / face-down");
+    spr.setTextColor(p.textDim, p.bg); ln("    dizzy / nap"); y += 4;
     spr.setTextColor(p.text, p.bg);    ln("Power  left side");
     spr.setTextColor(p.textDim, p.bg); ln("    tap = screen off");
     ln("    hold 6s = off");
@@ -661,33 +662,30 @@ void drawInfo() {
       spr.setTextColor(p.text, p.bg);
       ln("TO PAIR");
       spr.setTextColor(p.textDim, p.bg);
-      ln(" Open Claude desktop");
-      ln(" > Developer");
-      ln(" > Hardware Buddy");
-      y += 4;
-      ln(" auto-connects via BLE");
+      ln(" bluetoothctl pair,");
+      ln(" then run the");
+      ln(" claude-buddy bridge");
     }
 
   } else {
     _infoHeader(p, y, "CREDITS", infoPage);
     spr.setTextColor(p.textDim, p.bg);
-    ln("made by");
-    y += 4;
+    ln("original by");
     spr.setTextColor(p.text, p.bg);
     ln("Felix Rieseberg");
-    y += 12;
+    y += 8;
+    spr.setTextColor(p.textDim, p.bg);
+    ln("linux bridge + haiku");
+    spr.setTextColor(p.text, p.bg);
+    ln("Claude");
+    ln("gumptionthomas");
+    y += 8;
     spr.setTextColor(p.textDim, p.bg);
     ln("source");
-    y += 4;
     spr.setTextColor(p.text, p.bg);
-    ln("github.com/anthropics");
-    ln("/claude-desktop-buddy");
-    y += 12;
-    spr.setTextColor(p.textDim, p.bg);
-    ln("hardware");
-    y += 4;
-    ln("M5StickC Plus");
-    ln("ESP32 + AXP192");
+    ln("github.com/");
+    ln("gumptionthomas/");
+    ln("claude-desktop-buddy");
   }
 }
 
@@ -792,8 +790,14 @@ static void drawPetStats(const Palette& p) {
 
   spr.setTextColor(p.textDim, p.bg);
   spr.setCursor(6, y - 2); spr.print("mood");
-  uint8_t mood = statsMoodTier();
-  uint16_t moodCol = (mood >= 3) ? RED : (mood >= 2) ? HOT : p.textDim;
+  // Mood follows rest (energy) with a nudge for working today, so it actually
+  // moves on the Linux bridge (approve/deny — its old driver — never fires).
+  uint8_t en0 = statsEnergyTier();                 // 0..5 rest
+  int moodN = (en0 >= 4) ? 3 : (en0 >= 2) ? 2 : 1;
+  if (tama.tokensToday > 0) moodN += 1;            // engaged today -> happier
+  if (moodN > 4) moodN = 4;
+  uint8_t mood = (uint8_t)moodN;
+  uint16_t moodCol = (mood >= 3) ? GREEN : (mood >= 2) ? 0xFFE0 : HOT;
   for (int i = 0; i < 4; i++) tinyHeart(54 + i * 16, y + 2, i < mood, moodCol);
 
   y += 20;
@@ -822,21 +826,17 @@ static void drawPetStats(const Palette& p) {
 
   y += 20;
   spr.setTextColor(p.textDim, p.bg);
-  spr.setCursor(6, y);
-  spr.printf("approved %u", stats().approvals);
-  spr.setCursor(6, y + 10);
-  spr.printf("denied   %u", stats().denials);
   uint32_t nap = stats().napSeconds;
-  spr.setCursor(6, y + 20);
-  spr.printf("napped   %luh%02lum", nap/3600, (nap/60)%60);
+  spr.setCursor(6, y);
+  spr.printf("napped  %luh%02lum", nap/3600, (nap/60)%60);
   auto tokFmt = [&](const char* label, uint32_t v, int yPx) {
     spr.setCursor(6, yPx);
     if (v >= 1000000)   spr.printf("%s%lu.%luM", label, v/1000000, (v/100000)%10);
     else if (v >= 1000) spr.printf("%s%lu.%luK", label, v/1000, (v/100)%10);
     else                spr.printf("%s%lu", label, v);
   };
-  tokFmt("tokens   ", stats().tokens, y + 30);
-  tokFmt("today    ", tama.tokensToday, y + 40);
+  tokFmt("tokens  ", stats().tokens, y + 10);
+  tokFmt("today   ", tama.tokensToday, y + 20);
 }
 
 static void drawPetHowTo(const Palette& p) {

@@ -275,3 +275,21 @@ def test_add_tokens_ignores_nonpositive():
     s.add_tokens(0)
     s.add_tokens(-5)
     assert s.snapshot()["tokens"] == 0
+
+
+def test_add_tokens_updates_today_and_cumulative():
+    s = SessionStore(clock=FakeClock())
+    s.add_tokens(1200)
+    snap = s.snapshot()
+    assert snap["tokens"] == 1200
+    assert snap["tokens_today"] == 1200
+
+
+def test_reset_today_keeps_cumulative():
+    s = SessionStore(clock=FakeClock())
+    s.add_tokens(500)
+    s.reset_today()
+    s.add_tokens(300)
+    snap = s.snapshot()
+    assert snap["tokens"] == 800         # cumulative unaffected
+    assert snap["tokens_today"] == 300   # only since the reset
