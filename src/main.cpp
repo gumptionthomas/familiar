@@ -677,7 +677,8 @@ void drawInfo() {
     spr.setTextColor(p.textDim, p.bg);
     ln("linux bridge + haiku");
     spr.setTextColor(p.text, p.bg);
-    ln("Thomas B. & Claude");
+    ln("Claude");
+    ln("gumptionthomas");
     y += 8;
     spr.setTextColor(p.textDim, p.bg);
     ln("source");
