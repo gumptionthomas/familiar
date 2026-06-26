@@ -525,7 +525,7 @@ void drawPasskey() {
   spr.setTextSize(1);
   spr.setTextColor(p.textDim, p.bg);
   spr.setCursor(8, 56);  spr.print("BLUETOOTH PAIRING");
-  spr.setCursor(8, 184); spr.print("enter on desktop:");
+  spr.setCursor(8, 184); spr.print("enter to pair:");
   spr.setTextSize(3);
   spr.setTextColor(p.text, p.bg);
   char b[8]; snprintf(b, sizeof(b), "%06lu", (unsigned long)blePasskey());
@@ -548,17 +548,17 @@ void drawInfo() {
     _infoHeader(p, y, "ABOUT", infoPage);
     spr.setTextColor(p.textDim, p.bg);
     ln("I watch your Claude");
-    ln("desktop sessions.");
+    ln("Code sessions.");
     y += 6;
     ln("I sleep when nothing's");
     ln("happening, wake when");
     ln("you start working,");
-    ln("get impatient when");
-    ln("approvals pile up.");
+    ln("nudge you when a");
+    ln("prompt needs you.");
     y += 6;
     spr.setTextColor(p.text, p.bg);
-    ln("Press A on a prompt");
-    ln("to approve from here.");
+    ln("I speak in haiku");
+    ln("about your work.");
     y += 6;
     spr.setTextColor(p.textDim, p.bg);
     ln("18 species. Settings");
@@ -568,12 +568,13 @@ void drawInfo() {
     _infoHeader(p, y, "BUTTONS", infoPage);
     spr.setTextColor(p.text, p.bg);    ln("A   front");
     spr.setTextColor(p.textDim, p.bg); ln("    next screen");
-    ln("    approve prompt"); y += 4;
+    ln("    dismiss LED alert"); y += 4;
     spr.setTextColor(p.text, p.bg);    ln("B   right side");
-    spr.setTextColor(p.textDim, p.bg); ln("    next page");
-    ln("    deny prompt"); y += 4;
+    spr.setTextColor(p.textDim, p.bg); ln("    next page"); y += 4;
     spr.setTextColor(p.text, p.bg);    ln("hold A");
     spr.setTextColor(p.textDim, p.bg); ln("    menu"); y += 4;
+    spr.setTextColor(p.text, p.bg);    ln("shake / face-down");
+    spr.setTextColor(p.textDim, p.bg); ln("    dizzy / nap"); y += 4;
     spr.setTextColor(p.text, p.bg);    ln("Power  left side");
     spr.setTextColor(p.textDim, p.bg); ln("    tap = screen off");
     ln("    hold 6s = off");
@@ -661,33 +662,29 @@ void drawInfo() {
       spr.setTextColor(p.text, p.bg);
       ln("TO PAIR");
       spr.setTextColor(p.textDim, p.bg);
-      ln(" Open Claude desktop");
-      ln(" > Developer");
-      ln(" > Hardware Buddy");
-      y += 4;
-      ln(" auto-connects via BLE");
+      ln(" bluetoothctl pair,");
+      ln(" then run the");
+      ln(" claude-buddy bridge");
     }
 
   } else {
     _infoHeader(p, y, "CREDITS", infoPage);
     spr.setTextColor(p.textDim, p.bg);
-    ln("made by");
-    y += 4;
+    ln("original by");
     spr.setTextColor(p.text, p.bg);
     ln("Felix Rieseberg");
-    y += 12;
+    y += 8;
+    spr.setTextColor(p.textDim, p.bg);
+    ln("linux bridge + haiku");
+    spr.setTextColor(p.text, p.bg);
+    ln("Thomas B. & Claude");
+    y += 8;
     spr.setTextColor(p.textDim, p.bg);
     ln("source");
-    y += 4;
     spr.setTextColor(p.text, p.bg);
-    ln("github.com/anthropics");
-    ln("/claude-desktop-buddy");
-    y += 12;
-    spr.setTextColor(p.textDim, p.bg);
-    ln("hardware");
-    y += 4;
-    ln("M5StickC Plus");
-    ln("ESP32 + AXP192");
+    ln("github.com/");
+    ln("gumptionthomas/");
+    ln("claude-desktop-buddy");
   }
 }
 
