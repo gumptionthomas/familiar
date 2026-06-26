@@ -260,3 +260,18 @@ def test_latest_running():
     assert s.latest_running() == "b"
     s.stop("b")
     assert s.latest_running() == "a"
+
+
+def test_add_tokens_accumulates_in_snapshot():
+    s = SessionStore(clock=FakeClock())
+    assert s.snapshot()["tokens"] == 0
+    s.add_tokens(1200)
+    s.add_tokens(800)
+    assert s.snapshot()["tokens"] == 2000
+
+
+def test_add_tokens_ignores_nonpositive():
+    s = SessionStore(clock=FakeClock())
+    s.add_tokens(0)
+    s.add_tokens(-5)
+    assert s.snapshot()["tokens"] == 0

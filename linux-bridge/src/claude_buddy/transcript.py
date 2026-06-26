@@ -78,3 +78,51 @@ def last_reply(path, cap=80):
     if last_text > last_tool:                 # a text reply with no tool_use after it
         return items[last_text][1][:cap]
     return ""
+
+
+def turn_output_tokens(path) -> int:
+    """Sum of assistant `output_tokens` for the most recent turn (the assistant
+    messages after the last human prompt). 0 on any error — never raises."""
+    if not path:
+        return 0
+    try:
+        with open(path, "rb") as f:
+            try:
+                f.seek(-_TAIL, 2)
+            except OSError:
+                f.seek(0)
+            blob = f.read().decode("utf-8", "replace")
+    except Exception:
+        return 0
+    objs = []
+    for line in blob.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            objs.append(json.loads(line))
+        except Exception:
+            continue
+    last_human = -1
+    for i, o in enumerate(objs):
+        if not (isinstance(o, dict) and o.get("type") == "user"):
+            continue
+        msg = o.get("message")
+        content = msg.get("content", "") if isinstance(msg, dict) else ""
+        if isinstance(content, list):
+            text = " ".join(b.get("text", "") for b in content
+                            if isinstance(b, dict) and b.get("type") == "text")
+        else:
+            text = str(content)
+        if text.strip():
+            last_human = i
+    total = 0
+    for o in objs[last_human + 1:]:
+        if not (isinstance(o, dict) and o.get("type") == "assistant"):
+            continue
+        msg = o.get("message")
+        usage = msg.get("usage") if isinstance(msg, dict) else None
+        ot = usage.get("output_tokens") if isinstance(usage, dict) else None
+        if isinstance(ot, int):
+            total += ot
+    return total
