@@ -122,3 +122,17 @@ def test_on_stop_credits_output_tokens(tmp_path):
         return s.snapshot()
 
     assert asyncio.run(scenario())["tokens"] == 321
+
+
+def test_maybe_roll_today_resets_on_date_change():
+    import datetime
+    s = SessionStore()
+    b = daemon.Bridge(s, FakeTransport(), "/tmp/unused.sock")
+    s.add_tokens(100)
+    b._maybe_roll_today()                       # latch today, no reset
+    assert s.snapshot()["tokens_today"] == 100
+    b._today_date = datetime.date(2000, 1, 1)   # pretend last seen was long ago
+    b._maybe_roll_today()                       # date rolled -> reset today
+    snap = s.snapshot()
+    assert snap["tokens_today"] == 0
+    assert snap["tokens"] == 100                # cumulative preserved

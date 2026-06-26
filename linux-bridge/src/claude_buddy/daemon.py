@@ -3,7 +3,7 @@ import asyncio
 import json
 import os
 import sys
-from datetime import datetime
+from datetime import date, datetime
 
 from . import haiku, heartbeat, transcript
 from .config import load
@@ -43,7 +43,16 @@ class Bridge:
         self.haiku_periodic = haiku_periodic
         self._composing = False
         self._last_haiku = -1e9
+        self._today_date = None
         self._dirty = asyncio.Event()
+
+    def _maybe_roll_today(self):
+        d = date.today()
+        if self._today_date is None:
+            self._today_date = d
+        elif d != self._today_date:
+            self._today_date = d
+            self.store.reset_today()
 
     async def handle_conn(self, reader, writer):
         try:
@@ -95,6 +104,7 @@ class Bridge:
         except Exception:
             toks = 0
         if toks:
+            self._maybe_roll_today()
             self.store.add_tokens(toks)
             self._dirty.set()
         if self._compose is not None:               # haiku mode
@@ -144,6 +154,7 @@ class Bridge:
             except asyncio.TimeoutError:
                 pass  # keepalive tick
             self._dirty.clear()
+            self._maybe_roll_today()   # zero tokens_today at local midnight
             try:
                 await self.push()
             except Exception:
