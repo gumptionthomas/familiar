@@ -293,3 +293,11 @@ def test_reset_today_keeps_cumulative():
     snap = s.snapshot()
     assert snap["tokens"] == 800         # cumulative unaffected
     assert snap["tokens_today"] == 300   # only since the reset
+
+
+def test_snapshot_sanitizes_non_ascii_for_glcd_font():
+    s = SessionStore(clock=FakeClock(), haiku_mode=True)
+    s.set_haiku(["shed skin—", "it’s done", "“quiet”…"])
+    entries = s.snapshot()["entries"]
+    assert entries == ["shed skin-", "it's done", '"quiet"...']
+    assert all(ord(c) < 128 for e in entries for c in e)

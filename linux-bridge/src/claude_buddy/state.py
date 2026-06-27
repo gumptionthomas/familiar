@@ -1,6 +1,20 @@
 import time
 from dataclasses import dataclass, field
 
+# The firmware's GLCD font is ASCII-only; haiku text often has typographic
+# punctuation (em/en dashes, curly quotes, ellipsis) that would render as
+# multi-byte garbage. Fold to ASCII, drop anything else.
+_ASCII_SUBS = {
+    "—": "-", "–": "-", "‒": "-", "‘": "'", "’": "'",
+    "“": '"', "”": '"', "…": "...", " ": " ", "­": "",
+}
+
+
+def _ascii(s: str) -> str:
+    for k, v in _ASCII_SUBS.items():
+        s = s.replace(k, v)
+    return s.encode("ascii", "ignore").decode("ascii")
+
 
 @dataclass
 class _Session:
@@ -170,7 +184,8 @@ class SessionStore:
         # Tag with the project code only when the displayed feed spans 2+
         # projects (haiku lines have no code, so they're always untagged).
         multi = len({c for c, _ in combined if c}) >= 2
-        entries = [f"[{c}] {t}" if (multi and c) else t for c, t in combined]
+        entries = [_ascii(f"[{c}] {t}" if (multi and c) else t)
+                   for c, t in combined]
 
         msg = entries[-1] if entries else ("working" if running else "idle")
         return {
