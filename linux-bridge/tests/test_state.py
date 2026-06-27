@@ -301,3 +301,23 @@ def test_snapshot_sanitizes_non_ascii_for_glcd_font():
     entries = s.snapshot()["entries"]
     assert entries == ["shed skin-", "it's done", '"quiet"...']
     assert all(ord(c) < 128 for e in entries for c in e)
+
+
+def test_digest_includes_prompt():
+    s = SessionStore(clock=FakeClock())
+    s.prompt_submit("a", project="GH", prompt="fix the dash glyph")
+    s.post_tool("a", project="GH", tool="Edit", file="state.py")
+    s.record_reply("a", "dash folded to ascii")
+    d = s.digest("a")
+    assert 'asked: "fix the dash glyph"' in d
+    assert "Edit state.py" in d
+    assert 'reply: "dash folded to ascii"' in d
+
+
+def test_prompt_submit_clears_prior_prompt_and_collapses():
+    s = SessionStore(clock=FakeClock())
+    s.prompt_submit("a", project="GH", prompt="first ask")
+    s.prompt_submit("a", project="GH", prompt="  second\n   ask ")  # new turn
+    d = s.digest("a")
+    assert 'asked: "second ask"' in d
+    assert "first ask" not in d

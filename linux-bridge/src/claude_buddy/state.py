@@ -23,6 +23,7 @@ class _Session:
     last_seen: float = 0.0
     project: str = ""
     activity: list[str] = field(default_factory=list)  # haiku material, this turn
+    prompt_gist: str = ""
     reply_gist: str = ""
 
 
@@ -63,7 +64,7 @@ class SessionStore:
         self._recent.insert(0, (code, text))
         del self._recent[self._max_entries:]
 
-    def prompt_submit(self, sid: str, project: str = "") -> None:
+    def prompt_submit(self, sid: str, project: str = "", prompt: str = "") -> None:
         s = self._touch(sid)
         s.running = True
         s.waiting = False
@@ -71,6 +72,7 @@ class SessionStore:
             s.project = project
         s.activity = []          # fresh turn material
         s.reply_gist = ""
+        s.prompt_gist = " ".join(str(prompt).split())[:200]
         if not self._haiku_mode:
             self._push(s.project, "thinking...")
 
@@ -126,6 +128,8 @@ class SessionStore:
 
     def _session_digest(self, prefix: str, s: _Session) -> str:
         bits = []
+        if s.prompt_gist:
+            bits.append(f'asked: "{s.prompt_gist}"')
         if s.activity:
             bits.append(", ".join(s.activity))
         if s.reply_gist:

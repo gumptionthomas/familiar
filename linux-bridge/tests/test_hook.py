@@ -52,9 +52,18 @@ def test_map_simple_events():
         "event": "session_end", "session_id": "a"}
 
 
-def test_map_prompt_submit_includes_project():
+def test_map_prompt_submit_includes_project_and_prompt():
+    out = hook.map_event("prompt-submit", {
+        "session_id": "a", "cwd": "/x/webapp",
+        "prompt": "  fix the   dash\n glyph  "})
+    assert out == {"event": "prompt_submit", "session_id": "a",
+                   "project": "weba", "prompt": "fix the dash glyph"}
+
+
+def test_map_prompt_submit_no_prompt_empty():
     out = hook.map_event("prompt-submit", {"session_id": "a", "cwd": "/x/webapp"})
-    assert out == {"event": "prompt_submit", "session_id": "a", "project": "weba"}
+    assert out == {"event": "prompt_submit", "session_id": "a",
+                   "project": "weba", "prompt": ""}
 
 
 def test_map_stop_passes_transcript_path(tmp_path):
