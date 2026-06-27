@@ -47,8 +47,10 @@ def map_event(event: str, data: dict) -> dict | None:
         return {"event": "notification", "session_id": sid,
                 "project": _project(data.get("cwd"))}
     if event == "prompt-submit":
+        # The prompt itself is haiku material (the user opted in).
+        prompt = " ".join(str(data.get("prompt", "")).split())[:200]
         return {"event": "prompt_submit", "session_id": sid,
-                "project": _project(data.get("cwd"))}
+                "project": _project(data.get("cwd")), "prompt": prompt}
     if event == "stop":
         # Send the transcript path; the daemon polls it for the final reply,
         # which may be flushed shortly AFTER this hook fires.

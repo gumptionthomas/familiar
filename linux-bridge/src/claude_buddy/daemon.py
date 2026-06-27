@@ -13,7 +13,7 @@ from .transport import StdoutTransport
 _DISPATCH = {
     "session_start": lambda s, p: s.session_start(p["session_id"]),
     "prompt_submit": lambda s, p: s.prompt_submit(
-        p["session_id"], p.get("project", "")),
+        p["session_id"], p.get("project", ""), p.get("prompt", "")),
     "post_tool": lambda s, p: s.post_tool(
         p["session_id"], p.get("project", ""), p.get("tool", ""), p.get("file", "")),
     "notification": lambda s, p: s.notification(
