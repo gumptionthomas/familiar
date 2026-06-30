@@ -24,6 +24,9 @@ _DISPATCH = {
 }
 
 
+_TB_IDLE_N = 9   # idle_0 .. idle_8 buddy variants
+
+
 def apply_event(store: SessionStore, payload: dict) -> None:
     fn = _DISPATCH.get(payload.get("event"))
     if fn and payload.get("session_id"):
@@ -46,7 +49,20 @@ class Bridge:
         self._composing = False
         self._last_haiku = -1e9
         self._today_date = None
+        # Tidbyt buddy orchestration: the slot shows a state-reflective bufo by
+        # default; a new haiku takes it over for a few seconds, then reverts.
+        self._tb_haiku_until = -1e9
+        self._tb_celebrate_until = -1e9
+        self._tb_current = None        # asset/marker currently in the slot
+        self._tb_idle_idx = None
+        self._tb_idle_at = -1e9
+        self.tb_haiku_secs = 45.0
+        self.tb_celebrate_secs = 5.0
+        self.tb_idle_refresh = 180.0
         self._dirty = asyncio.Event()
+
+    def _loop_time(self):
+        return asyncio.get_event_loop().time()
 
     def _maybe_roll_today(self):
         d = date.today()
@@ -136,11 +152,59 @@ class Bridge:
                 self._last_haiku = asyncio.get_event_loop().time()
                 self._dirty.set()
                 if self._tidbyt:
-                    asyncio.create_task(tidbyt.push(lines, **self._tidbyt))
+                    asyncio.create_task(self._tidbyt_haiku(lines))
         except Exception:
             pass
         finally:
             self._composing = False
+
+    # --- Tidbyt buddy/haiku orchestration --------------------------------
+    async def _tidbyt_haiku(self, lines):
+        tb = self._tidbyt
+        ok = await tidbyt.push(lines, device_id=tb["device_id"],
+                               api_token=tb["api_token"], app_path=tb["app_path"],
+                               pixlet=tb["pixlet"])
+        if ok:
+            self._tb_haiku_until = self._loop_time() + self.tb_haiku_secs
+            self._tb_current = "haiku"
+
+    def _persona(self, snap, now):
+        # Mirror the firmware's derive: waiting > celebrate > busy > idle.
+        if snap.get("waiting", 0) > 0:
+            return "attention"
+        if snap.get("completed"):
+            self._tb_celebrate_until = now + self.tb_celebrate_secs
+        if now < self._tb_celebrate_until:
+            return "celebrate"
+        if snap.get("running", 0) > 0:
+            return "busy"
+        return "idle"
+
+    def _tidbyt_decide(self, snap, now):
+        """The buddy asset to show, or None to leave the slot unchanged."""
+        if now < self._tb_haiku_until:
+            return None                       # haiku event in progress
+        persona = self._persona(snap, now)
+        if persona != "idle":
+            return persona
+        # idle: rotate the variants sequentially, like the firmware.
+        if self._tb_idle_idx is None or now - self._tb_idle_at >= self.tb_idle_refresh:
+            self._tb_idle_idx = 0 if self._tb_idle_idx is None \
+                else (self._tb_idle_idx + 1) % _TB_IDLE_N
+            self._tb_idle_at = now
+        return "idle_%d" % self._tb_idle_idx
+
+    async def _tidbyt_sync(self, snap):
+        if not self._tidbyt:
+            return
+        asset = self._tidbyt_decide(snap, self._loop_time())
+        if asset is None or asset == self._tb_current:
+            return
+        self._tb_current = asset
+        tb = self._tidbyt
+        path = os.path.join(tb["asset_dir"], asset + ".webp")
+        await tidbyt.push_image(path, device_id=tb["device_id"],
+                                api_token=tb["api_token"], pixlet=tb["pixlet"])
 
     async def serve(self):
         if os.path.exists(self.socket_path):
@@ -148,7 +212,12 @@ class Bridge:
         return await asyncio.start_unix_server(self.handle_conn, self.socket_path)
 
     async def push(self):
-        await self.transport.send(heartbeat.encode(self.store.snapshot()))
+        snap = self.store.snapshot()
+        try:
+            await self.transport.send(heartbeat.encode(snap))
+        except Exception:
+            pass
+        return snap
 
     async def _push_loop(self):
         while True:
@@ -159,10 +228,12 @@ class Bridge:
                 pass  # keepalive tick
             self._dirty.clear()
             self._maybe_roll_today()   # zero tokens_today at local midnight
-            try:
-                await self.push()
-            except Exception:
-                pass
+            snap = await self.push()
+            if self._tidbyt:
+                try:
+                    await self._tidbyt_sync(snap)
+                except Exception:
+                    pass
 
     async def _sweep_loop(self):
         while True:
@@ -216,9 +287,11 @@ def _make_tidbyt(cfg):
     # The systemd user service runs with a minimal PATH that lacks ~/.local/bin,
     # so resolve pixlet to an absolute path the subprocess can actually find.
     pixlet = shutil.which("pixlet") or os.path.expanduser("~/.local/bin/pixlet")
-    app = os.path.join(os.path.dirname(__file__), "tidbyt_app.star")
+    here = os.path.dirname(__file__)
     return {"device_id": cfg.tidbyt_device_id, "api_token": cfg.tidbyt_api_key,
-            "app_path": app, "pixlet": pixlet}
+            "pixlet": pixlet,
+            "app_path": os.path.join(here, "tidbyt_app.star"),
+            "asset_dir": os.path.join(here, "tidbyt_buddy")}
 
 
 def main(argv=None) -> int:

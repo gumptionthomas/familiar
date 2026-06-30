@@ -57,3 +57,16 @@ async def push(lines, *, device_id, api_token, app_path,
                                    installation_id, pixlet)) == 0
     except Exception:
         return False
+
+
+async def push_image(webp_path, *, device_id, api_token, installation_id="claudebuddy",
+                     pixlet="pixlet", runner=None):
+    """Push a pre-rendered WebP (the buddy) directly — no .star render step."""
+    if not (device_id and api_token and webp_path and os.path.exists(webp_path)):
+        return False
+    run = runner or _run
+    try:
+        return await run(push_args(device_id, webp_path, api_token,
+                                   installation_id, pixlet)) == 0
+    except Exception:
+        return False

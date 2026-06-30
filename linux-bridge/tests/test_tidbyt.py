@@ -67,3 +67,24 @@ def test_push_swallows_runner_exception():
     ok = asyncio.run(tidbyt.push(["a"], device_id="d", api_token="t",
                                  app_path="/x", runner=boom))
     assert ok is False
+
+
+def test_push_image_noop_without_config_or_file(tmp_path):
+    f = tmp_path / "buddy.webp"; f.write_bytes(b"x")
+    assert asyncio.run(tidbyt.push_image(str(f), device_id="", api_token="t")) is False
+    assert asyncio.run(tidbyt.push_image("/no/such.webp", device_id="d", api_token="t")) is False
+
+
+def test_push_image_pushes_the_webp(tmp_path):
+    f = tmp_path / "buddy.webp"; f.write_bytes(b"x")
+    calls = []
+
+    async def fake(args):
+        calls.append(args)
+        return 0
+
+    ok = asyncio.run(tidbyt.push_image(str(f), device_id="dev", api_token="tok",
+                                       runner=fake))
+    assert ok is True
+    assert calls[0][:2] == ["pixlet", "push"]
+    assert str(f) in calls[0] and "dev" in calls[0] and "tok" in calls[0]

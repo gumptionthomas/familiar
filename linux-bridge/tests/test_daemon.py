@@ -136,3 +136,38 @@ def test_maybe_roll_today_resets_on_date_change():
     snap = s.snapshot()
     assert snap["tokens_today"] == 0
     assert snap["tokens"] == 100                # cumulative preserved
+
+
+def _bridge_tb():
+    tb = {"device_id": "d", "api_token": "t", "pixlet": "pixlet",
+          "app_path": "/a.star", "asset_dir": "/assets"}
+    return daemon.Bridge(SessionStore(), FakeTransport(), "/tmp/x.sock", tidbyt=tb)
+
+
+def test_persona_mapping():
+    b = _bridge_tb()
+    assert b._persona({"waiting": 1, "running": 1}, 100.0) == "attention"
+    assert b._persona({"waiting": 0, "running": 1}, 100.0) == "busy"
+    assert b._persona({"waiting": 0, "running": 0}, 100.0) == "idle"
+
+
+def test_persona_celebrate_pulse_then_expires():
+    b = _bridge_tb()
+    assert b._persona({"running": 1, "completed": True}, 100.0) == "celebrate"
+    assert b._persona({"running": 1, "completed": False}, 103.0) == "celebrate"
+    assert b._persona({"running": 1, "completed": False}, 106.0) == "busy"
+
+
+def test_tidbyt_decide_haiku_event_blocks_buddy():
+    b = _bridge_tb()
+    b._tb_haiku_until = 200.0
+    assert b._tidbyt_decide({"running": 1}, 150.0) is None
+    assert b._tidbyt_decide({"running": 1}, 201.0) == "busy"
+
+
+def test_tidbyt_decide_idle_rotates_sequentially():
+    b = _bridge_tb()
+    b.tb_idle_refresh = 10.0
+    assert b._tidbyt_decide({}, 100.0) == "idle_0"
+    assert b._tidbyt_decide({}, 105.0) == "idle_0"   # within window
+    assert b._tidbyt_decide({}, 111.0) == "idle_1"   # advanced
