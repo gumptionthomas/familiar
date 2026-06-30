@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import json
 import os
+import shutil
 import sys
 from datetime import date, datetime
 
@@ -212,9 +213,12 @@ def _make_compose(cfg):
 def _make_tidbyt(cfg):
     if not (cfg.tidbyt_device_id and cfg.tidbyt_api_key):
         return None
+    # The systemd user service runs with a minimal PATH that lacks ~/.local/bin,
+    # so resolve pixlet to an absolute path the subprocess can actually find.
+    pixlet = shutil.which("pixlet") or os.path.expanduser("~/.local/bin/pixlet")
     app = os.path.join(os.path.dirname(__file__), "tidbyt_app.star")
     return {"device_id": cfg.tidbyt_device_id, "api_token": cfg.tidbyt_api_key,
-            "app_path": app}
+            "app_path": app, "pixlet": pixlet}
 
 
 def main(argv=None) -> int:
