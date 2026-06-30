@@ -41,7 +41,10 @@ async def _run(args):
 
 
 async def push(lines, *, device_id, api_token, app_path,
-               installation_id="claude-haiku", pixlet="pixlet", runner=None):
+               installation_id="claudebuddy", pixlet="pixlet", runner=None):
+    # NOTE: the installation id must be alphanumeric (the API 400s on hyphens),
+    # and it only keeps the rotation slot stable — Tidbyt generates the display
+    # name shown in the app, which you rename there once.
     if not (device_id and api_token and app_path and any(lines)):
         return False
     run = runner or _run
