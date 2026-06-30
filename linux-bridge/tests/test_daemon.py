@@ -199,3 +199,46 @@ def test_tidbyt_assets_selects_pet_and_falls_back(tmp_path):
 
     d, idle = daemon._tidbyt_assets(str(tmp_path), "nonesuch")   # unknown -> bufo
     assert d == str(root) and idle == ["idle_0", "idle_1"]
+
+
+def test_tidbyt_haiku_waits_for_celebration(monkeypatch):
+    # A new haiku holds off until the celebration window closes, so the Tidbyt
+    # confetti isn't cut off after <1s.
+    b = _bridge_tb()
+    pushed_at = []
+
+    async def fake_push(lines, **kw):
+        pushed_at.append(b._loop_time())
+        return True
+
+    monkeypatch.setattr(daemon.tidbyt, "push", fake_push)
+
+    async def go():
+        start = b._loop_time()
+        b._tb_celebrate_until = start + 0.2
+        await b._tidbyt_haiku(["a", "b", "c"])
+        return start
+
+    start = asyncio.run(go())
+    assert pushed_at and pushed_at[0] - start >= 0.18      # waited the window out
+    assert b._tb_haiku_until > 0 and b._tb_current == "haiku"
+
+
+def test_tidbyt_haiku_no_wait_without_celebration(monkeypatch):
+    b = _bridge_tb()
+    pushed_at = []
+
+    async def fake_push(lines, **kw):
+        pushed_at.append(b._loop_time())
+        return True
+
+    monkeypatch.setattr(daemon.tidbyt, "push", fake_push)
+
+    async def go():
+        b._tb_celebrate_until = b._loop_time() - 5      # already elapsed
+        start = b._loop_time()
+        await b._tidbyt_haiku(["a", "b", "c"])
+        return start
+
+    start = asyncio.run(go())
+    assert pushed_at and pushed_at[0] - start < 0.1      # pushed promptly

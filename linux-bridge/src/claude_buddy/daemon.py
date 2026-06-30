@@ -112,6 +112,9 @@ class Bridge:
         return ""
 
     async def _on_stop(self, sid, project, path):
+        # A turn just ended -> open the celebration window now so the Tidbyt
+        # plays the confetti before a haiku takes the slot (see _tidbyt_haiku).
+        self._tb_celebrate_until = self._loop_time() + self.tb_celebrate_secs
         reply = await self._await_reply(path)
         # Credit this turn's output tokens (feeds the pet's level).
         loop = asyncio.get_event_loop()
@@ -159,6 +162,10 @@ class Bridge:
 
     # --- Tidbyt buddy/haiku orchestration --------------------------------
     async def _tidbyt_haiku(self, lines):
+        # Let an in-progress celebration finish before the haiku takes the slot.
+        wait = self._tb_celebrate_until - self._loop_time()
+        if wait > 0:
+            await asyncio.sleep(wait)
         tb = self._tidbyt
         ok = await tidbyt.push(lines, device_id=tb["device_id"],
                                api_token=tb["api_token"], app_path=tb["app_path"],

@@ -28,31 +28,44 @@ FIRMWARE_TICK_MS = 200         # the M5 ticks the pet every 200ms (main.cpp)
 MAX_ANIM_MS = 14500            # pixlet/Tidbyt hard-cap animations at 15s
 
 
+_CONFETTI = ["#ffd000", "#ff5fa2", "#33ddff", "#ffffff", "#6bd968", "#ff8a3d"]
+
+
 def _particle(state, i, n):
-    """Generic per-state particle for frame i: (char, x, y, color) or None."""
-    if state == "busy":                       # typing ticker, bottom center
-        dots = ["   ", ".  ", ".. ", "...", ".. ", ".  "]
-        return (dots[i % len(dots)], 30, 26, "#ffffff")
-    if state == "attention":                  # blinking alert above the head
-        return ("!", 31, 0, "#ffd000") if i % 2 == 0 else None
-    if state == "celebrate":                  # sparkles drifting down
-        spots = [(14, 2), (46, 4), (24, 0), (40, 1)]
-        x, y0 = spots[i % len(spots)]
-        ch = "*" if i % 2 == 0 else "."
-        return (ch, x, (y0 + i * 2) % 12, "#ffd000")
-    # idle: no particle — the blink/chew/look-around poses carry the liveness
-    # (matching the firmware, where the z belongs to the sleep state).
-    return None
+    """Tidbyt-native particles for frame i: list of (char, x, y, color).
+
+    Designed for the 64x32 panel rather than ported from the M5 firmware.
+    """
+    if state == "busy":
+        # A loading ellipsis building down the right edge, clear of the busy
+        # face animation in the center.
+        count = [0, 1, 2, 3, 3, 2][i % 6]
+        ys = [2, 9, 16]
+        return [(".", 59, ys[k], "#5bc8ff") for k in range(count)]
+    if state == "attention":
+        # Two bold exclamations flanking the head, pulsing on/off together.
+        return [("!", 20, 0, "#ffd000"), ("!", 40, 0, "#ffd000")] if i % 2 == 0 else []
+    if state == "celebrate":
+        # A full-width confetti rain: several colored bits falling at staggered
+        # phases, multiple visible per frame.
+        out = []
+        for k in range(6):
+            x = 3 + k * 10
+            y = (i * 3 + k * 5) % 22
+            ch = "*" if (i + k) % 2 else "."
+            out.append((ch, x, y, _CONFETTI[k % len(_CONFETTI)]))
+        return out
+    # idle: no particle — the blink/chew/look-around poses carry the liveness.
+    return []
 
 
-def _frame_star(rows, particle, color):
+def _frame_star(rows, particles, color):
     pose = "render.Padding(pad=(%d, %d, 0, 0), child=render.Column(children=[%s]))" % (
         POSE_X, POSE_Y,
         ", ".join('render.Text(content=%s, font="tom-thumb", color=%s)'
                   % (json.dumps(r), json.dumps(color)) for r in rows))
     children = [pose]
-    if particle:
-        ch, x, y, pcol = particle
+    for ch, x, y, pcol in particles:
         children.append(
             'render.Padding(pad=(%d, %d, 0, 0), child=render.Text(content=%s, '
             'font="tom-thumb", color=%s))' % (x, y, json.dumps(ch), json.dumps(pcol)))
