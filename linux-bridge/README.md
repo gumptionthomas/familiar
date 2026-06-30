@@ -37,7 +37,19 @@ owner   = "YourName"
 # the buddy shows the plain reply snippet instead.
 # api_key = "sk-ant-..."
 # model   = "claude-haiku-4-5-20251001"
+
+# Optional — mirror each haiku to a Tidbyt 64x32 display. Needs `pixlet` on
+# PATH (https://github.com/tronbyt/pixlet). Get the device id + API key from the
+# Tidbyt app ("Get API key"). Both required; falls back to $TIDBYT_API_KEY.
+# tidbyt_device_id = "your-device-id"
+# tidbyt_api_key   = "your-api-key"
 ```
+
+> **Tidbyt mirror:** when both `tidbyt_*` keys are set, the daemon renders each
+> new haiku with the bundled Pixlet app and pushes it to your Tidbyt (best-
+> effort; a missing `pixlet` or network blip never disturbs the M5 stick). If
+> Tidbyt's cloud ever sunsets, point pixlet at a self-hosted
+> [Tronbyt](https://github.com/tronbyt/tronbyt-server) server instead.
 
 ## 3. Install the hooks
 

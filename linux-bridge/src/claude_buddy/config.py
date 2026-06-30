@@ -16,6 +16,8 @@ class Config:
     socket_path: str = ""
     api_key: str = ""
     model: str = "claude-haiku-4-5-20251001"
+    tidbyt_device_id: str = ""
+    tidbyt_api_key: str = ""
 
 
 def _default_config_path() -> Path:
@@ -36,4 +38,7 @@ def load(path: Path | None = None) -> Config:
         # api_key enables haiku mode; falls back to the standard env var.
         api_key=data.get("api_key") or os.environ.get("ANTHROPIC_API_KEY", ""),
         model=data.get("model") or "claude-haiku-4-5-20251001",
+        # tidbyt_* (both required) mirror the haiku to a Tidbyt display.
+        tidbyt_device_id=data.get("tidbyt_device_id", ""),
+        tidbyt_api_key=data.get("tidbyt_api_key") or os.environ.get("TIDBYT_API_KEY", ""),
     )
