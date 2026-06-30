@@ -30,7 +30,7 @@ async def _resolve_address(cfg) -> str | None:
     return dev.address if dev else None
 
 
-async def run_with_ble(cfg, store, on_connect, compose=None) -> None:
+async def run_with_ble(cfg, store, on_connect, compose=None, tidbyt=None) -> None:
     backoff = 1.0
     while True:
         address = await _resolve_address(cfg)
@@ -56,7 +56,8 @@ async def run_with_ble(cfg, store, on_connect, compose=None) -> None:
                 except Exception:
                     pass
                 await on_connect(transport, cfg.owner)
-                bridge = Bridge(store, transport, cfg.socket_path, compose=compose)
+                bridge = Bridge(store, transport, cfg.socket_path,
+                                compose=compose, tidbyt=tidbyt)
                 # Race the bridge against the disconnect signal. If the link
                 # drops (battery death, unplug, out of range), bleak fires
                 # disconnected_callback -> tear down and reconnect, instead of

@@ -5,7 +5,7 @@ import os
 import sys
 from datetime import date, datetime
 
-from . import haiku, heartbeat, transcript
+from . import haiku, heartbeat, tidbyt, transcript
 from .config import load
 from .state import SessionStore
 from .transport import StdoutTransport
@@ -32,7 +32,7 @@ def apply_event(store: SessionStore, payload: dict) -> None:
 class Bridge:
     def __init__(self, store, transport, socket_path,
                  debounce=0.2, keepalive=10.0, sweep_interval=60.0,
-                 compose=None, haiku_periodic=90.0):
+                 compose=None, haiku_periodic=90.0, tidbyt=None):
         self.store = store
         self.transport = transport
         self.socket_path = socket_path
@@ -41,6 +41,7 @@ class Bridge:
         self.sweep_interval = sweep_interval
         self._compose = compose          # async fn(digest)->list[str]|None, or None
         self.haiku_periodic = haiku_periodic
+        self._tidbyt = tidbyt            # dict for tidbyt.push(**), or None
         self._composing = False
         self._last_haiku = -1e9
         self._today_date = None
@@ -133,6 +134,8 @@ class Bridge:
                 self.store.set_haiku(lines)
                 self._last_haiku = asyncio.get_event_loop().time()
                 self._dirty.set()
+                if self._tidbyt:
+                    asyncio.create_task(tidbyt.push(lines, **self._tidbyt))
         except Exception:
             pass
         finally:
@@ -206,6 +209,14 @@ def _make_compose(cfg):
     return compose
 
 
+def _make_tidbyt(cfg):
+    if not (cfg.tidbyt_device_id and cfg.tidbyt_api_key):
+        return None
+    app = os.path.join(os.path.dirname(__file__), "tidbyt_app.star")
+    return {"device_id": cfg.tidbyt_device_id, "api_token": cfg.tidbyt_api_key,
+            "app_path": app}
+
+
 def main(argv=None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     ap = argparse.ArgumentParser(prog="claude-buddy")
@@ -214,13 +225,17 @@ def main(argv=None) -> int:
     args = ap.parse_args(argv)
     cfg = load()
     compose = _make_compose(cfg)
+    tidbyt_cfg = _make_tidbyt(cfg)
     store = SessionStore(haiku_mode=compose is not None)
     if compose is not None:
         print("[claude-buddy] haiku mode on", file=sys.stderr)
+    if tidbyt_cfg is not None:
+        print("[claude-buddy] tidbyt mirror on", file=sys.stderr)
 
     if args.stdout:
         transport = StdoutTransport()
-        bridge = Bridge(store, transport, cfg.socket_path, compose=compose)
+        bridge = Bridge(store, transport, cfg.socket_path,
+                        compose=compose, tidbyt=tidbyt_cfg)
         print(f"[claude-buddy] dry-run; socket={cfg.socket_path}", file=sys.stderr)
         try:
             asyncio.run(bridge.run())
@@ -230,7 +245,8 @@ def main(argv=None) -> int:
 
     from .ble import run_with_ble
     try:
-        asyncio.run(run_with_ble(cfg, store, _on_connect, compose=compose))
+        asyncio.run(run_with_ble(cfg, store, _on_connect,
+                                 compose=compose, tidbyt=tidbyt_cfg))
     except KeyboardInterrupt:
         pass
     return 0
