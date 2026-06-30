@@ -24,10 +24,19 @@ def _state_body(src, state):
         return None
     i = m.end()
     depth = 1
+    quote = ""          # skip braces inside string/char literals (pose art has { })
     while i < len(src) and depth:
-        if src[i] == "{":
+        c = src[i]
+        if quote:
+            if c == "\\":
+                i += 1
+            elif c == quote:
+                quote = ""
+        elif c in '"\'':
+            quote = c
+        elif c == "{":
             depth += 1
-        elif src[i] == "}":
+        elif c == "}":
             depth -= 1
         i += 1
     return src[m.end():i - 1]
