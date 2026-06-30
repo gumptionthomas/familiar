@@ -41,7 +41,7 @@ async def _run(args):
 
 
 async def push(lines, *, device_id, api_token, app_path,
-               installation_id="claudebuddy", pixlet="pixlet", runner=None):
+               installation_id="claude-haiku", pixlet="pixlet", runner=None):
     if not (device_id and api_token and app_path and any(lines)):
         return False
     run = runner or _run
