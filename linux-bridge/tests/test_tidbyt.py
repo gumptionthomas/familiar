@@ -36,3 +36,18 @@ def test_push_image_poster_raises_is_false():
         raise OSError("network down")
     assert asyncio.run(tidbyt.push_image(b"x", device_id="d", api_token="t",
                                          poster=poster)) is False
+
+
+def test_push_renders_then_pushes(monkeypatch):
+    monkeypatch.setattr(tidbyt.haiku_render, "render", lambda lines: b"RENDERED")
+    sent = {}
+    def poster(url, data, headers):
+        import json, base64
+        sent["img"] = base64.b64decode(json.loads(data)["image"]); return 200
+    ok = asyncio.run(tidbyt.push(["a", "b", "c"], device_id="d", api_token="t",
+                                 poster=poster))
+    assert ok is True and sent["img"] == b"RENDERED"
+
+
+def test_push_empty_lines_is_false():
+    assert asyncio.run(tidbyt.push(["", "", ""], device_id="d", api_token="t")) is False

@@ -2,7 +2,6 @@ import argparse
 import asyncio
 import json
 import os
-import shutil
 import sys
 from datetime import date, datetime
 
@@ -188,8 +187,7 @@ class Bridge:
             await asyncio.sleep(wait)
         tb = self._tidbyt
         ok = await tidbyt.push(lines, device_id=tb["device_id"],
-                               api_token=tb["api_token"], app_path=tb["app_path"],
-                               pixlet=tb["pixlet"])
+                               api_token=tb["api_token"])
         if ok:
             self._tb_haiku_until = self._loop_time() + self.tb_haiku_secs
             self._tb_current = "haiku"
@@ -246,8 +244,9 @@ class Bridge:
         self._tb_current = asset
         tb = self._tidbyt
         path = os.path.join(tb["asset_dir"], asset + ".webp")
-        await tidbyt.push_image(path, device_id=tb["device_id"],
-                                api_token=tb["api_token"], pixlet=tb["pixlet"])
+        with open(path, "rb") as f:
+            await tidbyt.push_image(f.read(), device_id=tb["device_id"],
+                                    api_token=tb["api_token"])
 
     async def serve(self):
         if os.path.exists(self.socket_path):
@@ -351,14 +350,9 @@ def _tidbyt_assets(here, pet):
 def _make_tidbyt(cfg):
     if not (cfg.tidbyt_device_id and cfg.tidbyt_api_key):
         return None
-    # The systemd user service runs with a minimal PATH that lacks ~/.local/bin,
-    # so resolve pixlet to an absolute path the subprocess can actually find.
-    pixlet = shutil.which("pixlet") or os.path.expanduser("~/.local/bin/pixlet")
     here = os.path.dirname(__file__)
     asset_dir, idle_assets = _tidbyt_assets(here, cfg.tidbyt_pet)
     return {"device_id": cfg.tidbyt_device_id, "api_token": cfg.tidbyt_api_key,
-            "pixlet": pixlet,
-            "app_path": os.path.join(here, "tidbyt_app.star"),
             "asset_dir": asset_dir, "idle_assets": idle_assets}
 
 

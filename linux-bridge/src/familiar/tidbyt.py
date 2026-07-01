@@ -8,6 +8,8 @@ import base64
 import json
 import urllib.request
 
+from . import haiku_render
+
 PUSH_URL = "https://api.tidbyt.com/v0/devices/%s/push"
 
 
@@ -41,7 +43,14 @@ async def push_image(webp_bytes, *, device_id, api_token,
         return False
 
 
-async def push(lines, *, device_id, api_token, app_path,
-               installation_id="claudebuddy"):
-    # replaced in Task 5
-    return False
+async def push(lines, *, device_id, api_token, installation_id="claudebuddy",
+               renderer=None, poster=None) -> bool:
+    if not any(lines):
+        return False
+    render = renderer or haiku_render.render
+    try:
+        webp = render([str(x) for x in lines][:3])
+    except Exception:
+        return False
+    return await push_image(webp, device_id=device_id, api_token=api_token,
+                            installation_id=installation_id, poster=poster)

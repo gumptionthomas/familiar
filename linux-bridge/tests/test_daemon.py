@@ -141,8 +141,8 @@ def test_maybe_roll_today_resets_on_date_change():
 def _bridge_tb(idle_assets=None):
     if idle_assets is None:
         idle_assets = ["idle_%d" % i for i in range(9)]   # bufo default
-    tb = {"device_id": "d", "api_token": "t", "pixlet": "pixlet",
-          "app_path": "/a.star", "asset_dir": "/assets", "idle_assets": idle_assets}
+    tb = {"device_id": "d", "api_token": "t",
+          "asset_dir": "/assets", "idle_assets": idle_assets}
     return daemon.Bridge(SessionStore(), FakeTransport(), "/tmp/x.sock", tidbyt=tb)
 
 
