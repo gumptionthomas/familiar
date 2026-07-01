@@ -1,11 +1,14 @@
-# claude-desktop-buddy
+# Familiar
+
+*a desk buddy for Claude Code, on an M5 or a Tidbyt.*
 
 A fork of [`anthropics/claude-desktop-buddy`](https://github.com/anthropics/claude-desktop-buddy)
 — Anthropic's opt-in BLE API for Claude, plus an example ESP32 desk pet that
 reacts to your sessions. (Their contributing guide says the best contribution
 is a fork; this is one.)
 
-It adds three things, each optional and layered on the upstream firmware:
+Familiar adds three things to it, each optional and layered on the upstream
+firmware:
 
 - **A Linux bridge.** Upstream feeds the buddy from the macOS/Windows Claude
   desktop app, which Linux doesn't have. [`linux-bridge/`](linux-bridge/) is a
