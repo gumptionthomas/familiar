@@ -10,6 +10,11 @@ from PIL import Image
 SRC = "characters/bufo"
 DST = "linux-bridge/src/claude_buddy/tidbyt_buddy"
 W, H = 64, 32
+# The source GIFs run frantically fast on the panel (busy = a 2-frame 40ms
+# flicker). Slow every frame ~3x with a floor, kept under the 15s Tidbyt cap.
+SLOWDOWN = 3
+MIN_FRAME_MS = 120
+MAX_ANIM_MS = 14500
 STATES = ["idle_0", "idle_1", "idle_2", "idle_3", "idle_4", "idle_5", "idle_6",
           "idle_7", "idle_8", "busy", "attention", "celebrate"]
 
@@ -29,7 +34,12 @@ def convert(gif_path, out_path):
         canvas = Image.new("RGBA", (W, H), (0, 0, 0, 255))
         canvas.paste(fr, (ox, oy), fr)
         frames.append(canvas.convert("RGB"))
-        durations.append(im.info.get("duration", 100))
+        durations.append(max(round(im.info.get("duration", 100) * SLOWDOWN),
+                             MIN_FRAME_MS))
+    total = sum(durations)
+    if total > MAX_ANIM_MS:                       # keep under the 15s cap
+        f = MAX_ANIM_MS / total
+        durations = [max(round(d * f), 1) for d in durations]
     frames[0].save(out_path, save_all=True, append_images=frames[1:],
                    duration=durations, loop=0, format="WEBP", lossless=True)
     return n, (sw, sh)
