@@ -50,6 +50,9 @@ class Bridge:
         # default; a new haiku takes it over for a few seconds, then reverts.
         self._tb_haiku_until = -1e9
         self._tb_celebrate_until = -1e9
+        self._tb_heart_until = -1e9    # fast-completion "aww" pulse
+        self._tb_active_at = None      # last time the pet was doing something
+        self._tb_prompt_at = {}        # session_id -> prompt-submit time (turn timing)
         self._tb_current = None        # asset/marker currently in the slot
         self._tb_idle_idx = None
         self._tb_idle_at = -1e9
@@ -58,6 +61,8 @@ class Bridge:
         self.tb_haiku_secs = 18.0
         self.tb_celebrate_secs = 5.0
         self.tb_idle_refresh = 180.0
+        self.tb_sleep_after = 300.0     # doze off after this long with no activity
+        self.tb_heart_threshold = 5.0   # turns faster than this get heart, not confetti
         self._dirty = asyncio.Event()
 
     def _loop_time(self):
@@ -88,11 +93,27 @@ class Bridge:
                 continue
             apply_event(self.store, payload)
             self._dirty.set()
+            self._track_turn(payload)
             if payload.get("event") == "stop" and payload.get("transcript_path"):
                 asyncio.create_task(self._on_stop(
                     payload.get("session_id", ""), payload.get("project", ""),
                     payload["transcript_path"]))
         writer.close()
+
+    def _track_turn(self, payload):
+        # Time each turn (prompt -> stop) so a fast finish gets heart instead of
+        # confetti. Open the celebration window here (at the stop event) so it's
+        # set before _on_stop's reply-poll/compose delay (see _tidbyt_haiku).
+        ev, sid = payload.get("event"), payload.get("session_id", "")
+        if ev == "prompt_submit" and sid:
+            self._tb_prompt_at[sid] = self._loop_time()
+        elif ev == "stop":
+            now = self._loop_time()
+            started = self._tb_prompt_at.pop(sid, None)
+            if started is not None and now - started < self.tb_heart_threshold:
+                self._tb_heart_until = now + self.tb_celebrate_secs
+            else:
+                self._tb_celebrate_until = now + self.tb_celebrate_secs
 
     async def _await_reply(self, path, tries=30, interval=0.15):
         # Poll for the turn's final reply (the closing assistant text), requiring
@@ -112,9 +133,7 @@ class Bridge:
         return ""
 
     async def _on_stop(self, sid, project, path):
-        # A turn just ended -> open the celebration window now so the Tidbyt
-        # plays the confetti before a haiku takes the slot (see _tidbyt_haiku).
-        self._tb_celebrate_until = self._loop_time() + self.tb_celebrate_secs
+        # The celebrate/heart window was opened synchronously in _track_turn.
         reply = await self._await_reply(path)
         # Credit this turn's output tokens (feeds the pet's level).
         loop = asyncio.get_event_loop()
@@ -162,8 +181,9 @@ class Bridge:
 
     # --- Tidbyt buddy/haiku orchestration --------------------------------
     async def _tidbyt_haiku(self, lines):
-        # Let an in-progress celebration finish before the haiku takes the slot.
-        wait = self._tb_celebrate_until - self._loop_time()
+        # Let an in-progress celebration/heart pulse finish before the haiku
+        # takes the slot.
+        wait = max(self._tb_celebrate_until, self._tb_heart_until) - self._loop_time()
         if wait > 0:
             await asyncio.sleep(wait)
         tb = self._tidbyt
@@ -175,15 +195,29 @@ class Bridge:
             self._tb_current = "haiku"
 
     def _persona(self, snap, now):
-        # Mirror the firmware's derive: waiting > celebrate > busy > idle.
+        # Priority: needs-you > heart (fast finish) > celebrate > busy > idle,
+        # and idle dozes into sleep after a long quiet stretch.
         if snap.get("waiting", 0) > 0:
+            self._tb_active_at = now
             return "attention"
-        if snap.get("completed"):
+        # _track_turn opened a heart (fast) or celebrate window at the stop
+        # event; fall back to celebrate on the completed pulse if neither is set.
+        if snap.get("completed") and now >= self._tb_heart_until \
+                and now >= self._tb_celebrate_until:
             self._tb_celebrate_until = now + self.tb_celebrate_secs
+        if now < self._tb_heart_until:
+            self._tb_active_at = now
+            return "heart"
         if now < self._tb_celebrate_until:
+            self._tb_active_at = now
             return "celebrate"
         if snap.get("running", 0) > 0:
+            self._tb_active_at = now
             return "busy"
+        if self._tb_active_at is None:
+            self._tb_active_at = now
+        if now - self._tb_active_at >= self.tb_sleep_after:
+            return "sleep"
         return "idle"
 
     def _tidbyt_decide(self, snap, now):
