@@ -1,72 +1,47 @@
-"""Mirror the buddy's haiku to a Tidbyt 64x32 display via pixlet.
+"""Push the buddy pet + haiku to a Tidbyt 64x32 over the HTTP API.
 
-Best-effort: any failure (no config, pixlet missing, render/push error, no
-network) is swallowed so it never disturbs the M5 path. `runner` is injectable
-for tests so nothing actually shells out.
+Best-effort: any failure (no config, network, non-200) is swallowed so it never
+disturbs the M5 path. `poster` is injectable for tests.
 """
 import asyncio
-import os
-import tempfile
+import base64
+import json
+import urllib.request
 
-# The Tidbyt's tom-thumb font is ASCII; fold typographic punctuation like the
-# M5 path does.
-_SUBS = {
-    "—": "-", "–": "-", "‒": "-", "‘": "'", "’": "'",
-    "“": '"', "”": '"', "…": "...", " ": " ",
-}
+PUSH_URL = "https://api.tidbyt.com/v0/devices/%s/push"
 
 
-def _ascii(s: str) -> str:
-    for k, v in _SUBS.items():
-        s = s.replace(k, v)
-    return s.encode("ascii", "ignore").decode("ascii")
+def _post(url, data, headers) -> int:
+    req = urllib.request.Request(url, data=data, headers=headers, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return r.status
+    except urllib.error.HTTPError as e:
+        return e.code
 
 
-def render_args(app_path, lines, out, pixlet="pixlet"):
-    ln = [_ascii(str(x)) for x in lines][:3]
-    ln += [""] * (3 - len(ln))
-    return [pixlet, "render", app_path,
-            "l1=" + ln[0], "l2=" + ln[1], "l3=" + ln[2], "-o", out]
-
-
-def push_args(device_id, out, api_token, installation_id, pixlet="pixlet"):
-    return [pixlet, "push", device_id, out,
-            "-t", api_token, "-i", installation_id]
-
-
-async def _run(args):
-    proc = await asyncio.create_subprocess_exec(
-        *args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
-    return await proc.wait()
+async def push_image(webp_bytes, *, device_id, api_token,
+                     installation_id="claudebuddy", poster=None) -> bool:
+    if not (device_id and api_token and webp_bytes):
+        return False
+    post = poster or _post
+    body = json.dumps({
+        "image": base64.b64encode(webp_bytes).decode(),
+        "installationID": installation_id,
+        "background": False,
+    }).encode()
+    headers = {"Authorization": "Bearer " + api_token,
+               "Content-Type": "application/json"}
+    url = PUSH_URL % device_id
+    try:
+        status = await asyncio.get_event_loop().run_in_executor(
+            None, post, url, body, headers)
+        return status == 200
+    except Exception:
+        return False
 
 
 async def push(lines, *, device_id, api_token, app_path,
-               installation_id="claudebuddy", pixlet="pixlet", runner=None):
-    # NOTE: the installation id must be alphanumeric (the API 400s on hyphens),
-    # and it only keeps the rotation slot stable — Tidbyt generates the display
-    # name shown in the app, which you rename there once.
-    if not (device_id and api_token and app_path and any(lines)):
-        return False
-    run = runner or _run
-    out = os.path.join(tempfile.gettempdir(),
-                       "familiar-tidbyt-%d.webp" % os.getpid())
-    try:
-        if await run(render_args(app_path, lines, out, pixlet)) != 0:
-            return False
-        return await run(push_args(device_id, out, api_token,
-                                   installation_id, pixlet)) == 0
-    except Exception:
-        return False
-
-
-async def push_image(webp_path, *, device_id, api_token, installation_id="claudebuddy",
-                     pixlet="pixlet", runner=None):
-    """Push a pre-rendered WebP (the buddy) directly — no .star render step."""
-    if not (device_id and api_token and webp_path and os.path.exists(webp_path)):
-        return False
-    run = runner or _run
-    try:
-        return await run(push_args(device_id, webp_path, api_token,
-                                   installation_id, pixlet)) == 0
-    except Exception:
-        return False
+               installation_id="claudebuddy"):
+    # replaced in Task 5
+    return False
