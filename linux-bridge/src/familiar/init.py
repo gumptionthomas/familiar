@@ -99,7 +99,9 @@ def main(argv=None) -> int:
     if old_cfg.exists() and old_cfg != cfg_path.parent:
         print(f"Migrating existing claude-buddy setup from {old_cfg} ...")
         migrate(str(old_cfg), str(cfg_path.parent), str(_settings_path()))
-        print("Migrated. You can `uv tool uninstall claude-buddy` when ready.")
+        _swap_service()
+        print("Migrated (service swapped: claude-buddy → familiar). "
+              "You can `uv tool uninstall claude-buddy` when ready.")
         return 0
 
     interactive = not (a.yes or a.tidbyt_device)
@@ -117,6 +119,12 @@ def main(argv=None) -> int:
         _install_service()
     print("Done. Start with `familiar run` (or the service).")
     return 0
+
+
+def _swap_service():
+    # Best-effort: stop/disable the old claude-buddy user service, install+enable familiar's.
+    os.system("systemctl --user disable --now claude-buddy.service 2>/dev/null")  # noqa: S605
+    _install_service()
 
 
 def _install_service():

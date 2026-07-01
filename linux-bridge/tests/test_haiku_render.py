@@ -33,3 +33,8 @@ def test_render_under_15s():
 def test_render_empty_lines_ok():
     out = haiku_render.render(["", "", ""])
     assert Image.open(io.BytesIO(out)).size == (64, 32)
+
+
+def test_ascii_folds_typographic_punctuation():
+    from familiar.haiku_render import _ascii
+    assert _ascii("it’s “hi” — done…") == 'it\'s "hi" - done...'

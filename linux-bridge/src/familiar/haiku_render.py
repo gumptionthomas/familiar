@@ -20,9 +20,13 @@ BADGE = Image.open(io.BytesIO(base64.b64decode(
 
 
 # Fold typographic punctuation the tom-thumb (ASCII-only) glyphs can't draw.
-_SUBS = {"—": "-", "–": "-", "‒": "-", "'": "'",
-         "'": "'", "“": '"', "”": '"', "…": "...",
-         " ": " "}
+_SUBS = {
+    "\u2014": "-", "\u2013": "-", "\u2012": "-",   # em / en / figure dash
+    "\u2018": "'", "\u2019": "'",                   # curly single quotes
+    "\u201c": '"', "\u201d": '"',                   # curly double quotes
+    "\u2026": "...",                                # ellipsis
+    "\u00a0": " ",                                  # non-breaking space
+}
 
 
 def _ascii(s):

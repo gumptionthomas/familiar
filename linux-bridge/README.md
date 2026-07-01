@@ -101,7 +101,7 @@ migration automatically:
 - Copies `~/.config/claude-buddy/config.toml` → `~/.config/familiar/config.toml`
   (non-destructive; won't overwrite if the familiar config already exists).
 - Rewrites the hook commands in `~/.claude/settings.json` from
-  `claude-buddy hook <event>` to `familiar hook <event>`.
+  `claude-buddy-hook <event>` to `familiar hook <event>`.
 - Swaps the running service from `claude-buddy.service` to `familiar.service`.
 
 After `familiar init` completes and you've verified everything works:
