@@ -20,5 +20,6 @@ def test_draw_text_sets_pixels():
     im = Image.new("RGB", (32, 8), (0, 0, 0))
     d = ImageDraw.Draw(im)
     font.draw_text(d, (0, 0), "A", (255, 255, 255))
-    assert im.getcolors()[0][1] != (255, 255, 255)  # not entirely white
-    assert (255, 255, 255) in [c for _, c in im.getcolors()]  # some white drawn
+    colors = {c for _, c in im.getcolors()}
+    assert (0, 0, 0) in colors          # background present (not entirely white)
+    assert (255, 255, 255) in colors    # glyph pixels drawn
