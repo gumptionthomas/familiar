@@ -42,9 +42,8 @@ def _particle(state, i, n):
         count = [0, 1, 2, 3, 3, 2, 1][i % 7]
         ys = [2, 9, 16]
         return [(".", 59, ys[k], "#5bc8ff") for k in range(count)]
-    if state == "attention":
-        # Two bold exclamations flanking the head, pulsing on/off together.
-        return [("!", 20, 0, "#ffd000"), ("!", 40, 0, "#ffd000")] if i % 2 == 0 else []
+    # attention: no particle — the pulsing amber border (see _border) is the
+    # "needs you" signal, and reads better from across the room than a small !.
     if state == "celebrate":
         # A full-width confetti rain: several colored bits falling at staggered
         # phases, multiple visible per frame.
@@ -59,7 +58,21 @@ def _particle(state, i, n):
     return []
 
 
-def _frame_star(rows, particles, color):
+def _border(state, i, n):
+    """A pulsing amber panel frame for 'needs you' (attention), else None.
+
+    The amber breathes bright<->dim over an 8-frame cycle so it reads as a
+    deliberate pulse from across the room.
+    """
+    if state != "attention":
+        return None
+    phase = i % 8
+    tri = phase if phase <= 4 else 8 - phase        # 0..4..0
+    f = 0.2 + 0.8 * (tri / 4)                        # dim glow -> bright -> dim
+    return "#%02x%02x00" % (round(255 * f), round(176 * f))
+
+
+def _frame_star(rows, particles, color, border=None):
     pose = "render.Padding(pad=(%d, %d, 0, 0), child=render.Column(children=[%s]))" % (
         POSE_X, POSE_Y,
         ", ".join('render.Text(content=%s, font="tom-thumb", color=%s)'
@@ -69,6 +82,15 @@ def _frame_star(rows, particles, color):
         children.append(
             'render.Padding(pad=(%d, %d, 0, 0), child=render.Text(content=%s, '
             'font="tom-thumb", color=%s))' % (x, y, json.dumps(ch), json.dumps(pcol)))
+    if border:
+        # A 2px frame as four edge boxes on top, leaving the center transparent.
+        c = json.dumps(border)
+        children += [
+            'render.Box(width=64, height=2, color=%s)' % c,                         # top
+            'render.Box(width=2, height=32, color=%s)' % c,                         # left
+            'render.Padding(pad=(0, 30, 0, 0), child=render.Box(width=64, height=2, color=%s))' % c,   # bottom
+            'render.Padding(pad=(62, 0, 0, 0), child=render.Box(width=2, height=32, color=%s))' % c,   # right
+        ]
     return "render.Stack(children=[%s])" % ", ".join(children)
 
 
@@ -76,7 +98,8 @@ def _star(state, data):
     frames = data["frames"]
     color = data["color"]
     body = ",\n        ".join(
-        _frame_star(frames[i], _particle(state, i, len(frames)), color)
+        _frame_star(frames[i], _particle(state, i, len(frames)), color,
+                    _border(state, i, len(frames)))
         for i in range(len(frames)))
     # Match the M5 (each pose holds `divisor` ticks of 200ms), but speed up just
     # enough to keep every pose under the 15s animation cap.
