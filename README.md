@@ -176,8 +176,9 @@ If you're iterating on a character and would rather skip the BLE round-trip,
 
 The Linux bridge can also drive a [Tidbyt](https://tidbyt.com) 64×32 LED matrix.
 It shows the same pet the stick does — state-reflective, in any of the eighteen
-ASCII species (or the bundled `bufo` GIF) — and scrolls the current haiku past
-when a turn ends.
+ASCII species (or the bundled `bufo` GIF). The pet needs only the two Tidbyt
+keys; if haiku mode is also on (an Anthropic key is set), each finished turn
+scrolls its haiku past before returning to the pet.
 
 Pick a species with `tidbyt_pet` in the bridge config; the states map the same
 way as the stick (busy / needs-you / celebrate / idle, plus a sleep doze and a

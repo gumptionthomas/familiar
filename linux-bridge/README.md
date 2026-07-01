@@ -108,8 +108,10 @@ you're not logged in.)
 
 With `tidbyt_device_id`, `tidbyt_api_key`, and `pixlet` set, the daemon also
 drives a [Tidbyt](https://tidbyt.com) 64×32 display. It shows a state-reflective
-pet by default, and when a turn ends it scrolls the current haiku past for a
-couple of passes before returning to the pet.
+pet by default. If haiku mode is also on (an Anthropic `api_key` is set), each
+finished turn scrolls its haiku past for a couple of passes before returning to
+the pet — otherwise the Tidbyt just shows the pet (the two Tidbyt keys alone are
+enough; the haiku is the only part that needs the Anthropic key).
 
 **Pick a species** with `tidbyt_pet` — one of eighteen ASCII pets, or `bufo`
 (the bundled GIF character):
