@@ -183,6 +183,11 @@ ASCII species (or the bundled `bufo` GIF). The pet needs only the two Tidbyt
 keys; if haiku mode is also on (an Anthropic key is set), each finished turn
 scrolls its haiku past before returning to the pet.
 
+<p align="center">
+  <img src="docs/tidbyt-pet.jpg" alt="Cactus ASCII pet on a Tidbyt, with the M5StickC Plus buddy alongside" width="405">
+  <img src="docs/tidbyt-haiku.jpg" alt="A session haiku scrolling on the Tidbyt" width="405">
+</p>
+
 Pick a species with `tidbyt_pet` in the bridge config; the states map the same
 way as the stick (busy / needs-you / celebrate / idle, plus a sleep doze and a
 heart for fast turns). Setup — device keys, `pixlet`, choosing a species — is in
