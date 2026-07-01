@@ -38,18 +38,18 @@ owner   = "YourName"
 # api_key = "sk-ant-..."
 # model   = "claude-haiku-4-5-20251001"
 
-# Optional — mirror each haiku to a Tidbyt 64x32 display. Needs `pixlet` on
-# PATH (https://github.com/tronbyt/pixlet). Get the device id + API key from the
-# Tidbyt app ("Get API key"). Both required; falls back to $TIDBYT_API_KEY.
+# Optional — drive a Tidbyt 64x32 display: a state-reflective pet, plus the
+# haiku scrolling past when a turn ends. Needs `pixlet` on PATH
+# (https://github.com/tronbyt/pixlet). Get the device id + API key from the
+# Tidbyt app ("Get API key"). Both required; api key falls back to $TIDBYT_API_KEY.
 # tidbyt_device_id = "your-device-id"
 # tidbyt_api_key   = "your-api-key"
+# tidbyt_pet       = "capybara"   # any species in the list below, or "bufo"
 ```
 
-> **Tidbyt mirror:** when both `tidbyt_*` keys are set, the daemon renders each
-> new haiku with the bundled Pixlet app and pushes it to your Tidbyt (best-
-> effort; a missing `pixlet` or network blip never disturbs the M5 stick). If
-> Tidbyt's cloud ever sunsets, point pixlet at a self-hosted
-> [Tronbyt](https://github.com/tronbyt/tronbyt-server) server instead.
+See [Tidbyt companion](#tidbyt-companion) for what it shows and how to pick a
+species. It's best-effort — a missing `pixlet` or network blip never disturbs
+the M5 stick.
 
 ## 3. Install the hooks
 
@@ -103,6 +103,44 @@ you're not logged in.)
 
 > **Don't run a manual `claude-buddy` and the service at the same time** — BLE
 > allows only one connection to the stick.
+
+## Tidbyt companion
+
+With `tidbyt_device_id`, `tidbyt_api_key`, and `pixlet` set, the daemon also
+drives a [Tidbyt](https://tidbyt.com) 64×32 display. It shows a state-reflective
+pet by default. If haiku mode is also on (an Anthropic `api_key` is set), each
+finished turn scrolls its haiku past for a couple of passes before returning to
+the pet — otherwise the Tidbyt just shows the pet (the two Tidbyt keys alone are
+enough; the haiku is the only part that needs the Anthropic key).
+
+**Pick a species** with `tidbyt_pet` — one of eighteen ASCII pets, or `bufo`
+(the bundled GIF character):
+
+> `capybara` · `duck` · `goose` · `blob` · `cat` · `dragon` · `octopus` ·
+> `owl` · `penguin` · `turtle` · `snail` · `ghost` · `axolotl` · `cactus` ·
+> `robot` · `rabbit` · `mushroom` · `chonk` · `bufo`
+
+Restart the service after changing it; an unknown name falls back to `bufo`.
+
+**States**, mapped from your Claude Code activity:
+
+| Pet | When |
+|---|---|
+| busy | a session is running — a loading pulse ticks down the side |
+| needs you | a session is waiting on you — a **pulsing amber border** |
+| celebrate | a turn finished — a confetti burst |
+| heart | a turn finished **fast** (< ~5s) — rising hearts instead of confetti |
+| idle | connected, nothing urgent |
+| sleep | ~5 min with no activity — the pet dozes with `Zzz` |
+
+The pet WebPs are pre-rendered and bundled with the package —
+`tools/render_ascii_pet.py` builds the ASCII species from their firmware source,
+`tools/build_tidbyt_buddy.py` builds bufo from GIFs. Pushes go over the Tidbyt
+cloud API; if that ever sunsets, point `pixlet` at a self-hosted
+[Tronbyt](https://github.com/tronbyt/tronbyt-server) server instead.
+
+This is the roughest part of the project to hand off: it renders and pushes from
+your own machine rather than being a one-click Tidbyt community app.
 
 ## Troubleshooting
 
