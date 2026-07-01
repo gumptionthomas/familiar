@@ -11,7 +11,7 @@ import json
 import re
 import sys
 
-STATES = ["Idle", "Busy", "Attention", "Celebrate"]
+STATES = ["Idle", "Busy", "Attention", "Celebrate", "Sleep", "Heart"]
 
 
 def _unescape(s):

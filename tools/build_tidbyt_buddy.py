@@ -16,7 +16,7 @@ SLOWDOWN = 3
 MIN_FRAME_MS = 120
 MAX_ANIM_MS = 14500
 STATES = ["idle_0", "idle_1", "idle_2", "idle_3", "idle_4", "idle_5", "idle_6",
-          "idle_7", "idle_8", "busy", "attention", "celebrate"]
+          "idle_7", "idle_8", "busy", "attention", "celebrate", "sleep", "heart"]
 
 
 def convert(gif_path, out_path):

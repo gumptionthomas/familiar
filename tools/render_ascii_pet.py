@@ -42,6 +42,22 @@ def _particle(state, i, n):
         count = [0, 1, 2, 3, 3, 2, 1][i % 7]
         ys = [2, 9, 16]
         return [(".", 59, ys[k], "#5bc8ff") for k in range(count)]
+    if state == "sleep":
+        # Zzz drifting up and to the right above the head.
+        out = []
+        for k in range(3):
+            ph = (i - k * 4) % 12
+            if ph < 7:
+                out.append(("Z" if k == 2 else "z", 40 + ph, 8 - ph, "#8899bb"))
+        return out
+    if state == "heart":
+        # A couple of little hearts rising and fading above the head.
+        out = []
+        for k in range(2):
+            ph = (i + k * 6) % 12
+            if ph < 8:
+                out.append(("<3", 26 + k * 10, 8 - ph, "#ff5fa2"))
+        return out
     # attention: no particle — the pulsing amber border (see _border) is the
     # "needs you" signal, and reads better from across the room than a small !.
     if state == "celebrate":

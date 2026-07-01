@@ -242,3 +242,45 @@ def test_tidbyt_haiku_no_wait_without_celebration(monkeypatch):
 
     start = asyncio.run(go())
     assert pushed_at and pushed_at[0] - start < 0.1      # pushed promptly
+
+
+def test_persona_sleeps_after_quiet_stretch():
+    b = _bridge_tb()
+    b.tb_sleep_after = 300.0
+    assert b._persona({"running": 0, "waiting": 0}, 1000.0) == "idle"   # latches active_at
+    assert b._persona({"running": 0, "waiting": 0}, 1200.0) == "idle"   # 200s < 300s
+    assert b._persona({"running": 0, "waiting": 0}, 1301.0) == "sleep"  # 301s >= 300s
+    # activity wakes it back up
+    assert b._persona({"running": 1, "waiting": 0}, 1400.0) == "busy"
+    assert b._persona({"running": 0, "waiting": 0}, 1450.0) == "idle"   # active_at reset
+
+
+def test_persona_heart_window_beats_celebrate():
+    b = _bridge_tb()
+    b._tb_heart_until = 105.0
+    b._tb_celebrate_until = 110.0
+    assert b._persona({"completed": False}, 102.0) == "heart"    # heart wins while active
+    assert b._persona({"completed": False}, 107.0) == "celebrate"  # heart expired
+    assert b._persona({"completed": False}, 112.0) == "idle"
+
+
+def test_track_turn_fast_finish_sets_heart():
+    b = _bridge_tb()
+    b.tb_heart_threshold = 5.0
+    b._loop_time = lambda: 100.0
+    b._track_turn({"event": "prompt_submit", "session_id": "s"})
+    b._loop_time = lambda: 103.0                      # 3s turn -> fast
+    b._track_turn({"event": "stop", "session_id": "s"})
+    assert b._tb_heart_until > 103.0
+    assert b._tb_celebrate_until < 0
+
+
+def test_track_turn_slow_finish_sets_celebrate():
+    b = _bridge_tb()
+    b.tb_heart_threshold = 5.0
+    b._loop_time = lambda: 100.0
+    b._track_turn({"event": "prompt_submit", "session_id": "s"})
+    b._loop_time = lambda: 120.0                      # 20s turn -> normal
+    b._track_turn({"event": "stop", "session_id": "s"})
+    assert b._tb_celebrate_until > 120.0
+    assert b._tb_heart_until < 0
