@@ -1,16 +1,31 @@
 # claude-desktop-buddy
 
-> **This fork** adds a **Linux bridge** so the buddy works with **Claude Code**
-> on Linux — the upstream bridge is built into the macOS/Windows desktop app,
-> which Linux doesn't have. Running Claude Code on Linux? See
-> **[`linux-bridge/`](linux-bridge/)** to set it up.
->
-> It also carries two small firmware tweaks for a single-user Claude Code setup:
-> - **`busy` triggers at 1 running session** (upstream: 3), so one active session shows as busy.
-> - the **portrait charging clock is rebalanced** — full-size pet on top, compact time + date tucked at the bottom (upstream puts a big clock over a shrunken pet).
->
-> Pull upstream updates from the `upstream` remote; the bridge lives in its own
-> `linux-bridge/` directory and the firmware changes are isolated to `src/main.cpp`.
+A fork of [`anthropics/claude-desktop-buddy`](https://github.com/anthropics/claude-desktop-buddy)
+— Anthropic's opt-in BLE API for Claude, plus an example ESP32 desk pet that
+reacts to your sessions. (Their contributing guide says the best contribution
+is a fork; this is one.)
+
+It adds three things, each optional and layered on the upstream firmware:
+
+- **A Linux bridge.** Upstream feeds the buddy from the macOS/Windows Claude
+  desktop app, which Linux doesn't have. [`linux-bridge/`](linux-bridge/) is a
+  small daemon that feeds it from **Claude Code** over BLE instead — no desktop
+  app needed.
+- **Haiku firmware.** With an API key set, the buddy narrates your session as a
+  haiku written by Claude Haiku. The original prompt buddy riffed on your work
+  in verse; the desk-pet firmware left that behind, so this puts it back. (Plus
+  two single-user tweaks: `busy` at one running session instead of three, and a
+  rebalanced portrait charging clock.)
+- **A Tidbyt companion.** The same bridge can drive a [Tidbyt](https://tidbyt.com)
+  64×32 display — the pet, state-reflective, in any of eighteen ASCII species,
+  with the haiku scrolling past when a turn ends. Still rough for hands-off
+  distribution (see [Tidbyt companion](#tidbyt-companion)).
+
+Firmware changes stay isolated to `src/main.cpp`, the bridge lives in
+`linux-bridge/`, and upstream updates pull from the `upstream` remote. The
+upstream project's own description follows.
+
+---
 
 Claude for macOS and Windows can connect Claude Cowork and Claude Code to
 maker devices over BLE, so developers and makers can build hardware that
@@ -89,7 +104,13 @@ Once running, you can also wipe everything from the device itself: **hold A
 
 ## Pairing
 
-To pair your device with Claude, first enable developer mode (**Help →
+Two ways to feed the buddy — pick one:
+
+- **macOS / Windows desktop app** (upstream) — the steps below.
+- **Linux + Claude Code** (this fork) — pair and run the daemon in
+  [`linux-bridge/`](linux-bridge/) instead; skip the rest of this section.
+
+To pair your device with the desktop app, first enable developer mode (**Help →
 Troubleshooting → Enable Developer Mode**). Then, open the Hardware Buddy
 window in **Developer → Open Hardware Buddy…**, click **Connect**, and pick
 your device from the list. macOS will prompt for Bluetooth permission on
@@ -178,6 +199,23 @@ If you're iterating on a character and would rather skip the BLE round-trip,
 `tools/flash_character.py characters/bufo` stages it into `data/` and runs
 `pio run -t uploadfs` directly over USB.
 
+## Tidbyt companion
+
+The Linux bridge can also drive a [Tidbyt](https://tidbyt.com) 64×32 LED matrix.
+It shows the same pet the stick does — state-reflective, in any of the eighteen
+ASCII species (or the bundled `bufo` GIF) — and scrolls the current haiku past
+when a turn ends.
+
+Pick a species with `tidbyt_pet` in the bridge config; the states map the same
+way as the stick (busy / needs-you / celebrate / idle, plus a sleep doze and a
+heart for fast turns). Setup — device keys, `pixlet`, choosing a species — is in
+[`linux-bridge/`](linux-bridge/#tidbyt-companion).
+
+This is the least-polished part of the fork: it renders locally and pushes over
+the Tidbyt cloud API (or a self-hosted
+[Tronbyt](https://github.com/tronbyt/tronbyt-server)), so it isn't a one-click
+community app yet.
+
 ## The seven states
 
 | State       | Trigger                     | Feel                        |
@@ -204,6 +242,10 @@ src/
   stats.h        — NVS-backed stats, settings, owner, species choice
 characters/      — example GIF character packs
 tools/           — generators and converters
+  extract_buddies.py   — parse a species' poses/timing/color from its .cpp
+  render_ascii_pet.py  — render those to Tidbyt WebPs (this fork)
+  build_tidbyt_buddy.py— convert bufo GIFs to Tidbyt WebPs (this fork)
+linux-bridge/    — Linux/Claude Code BLE daemon + Tidbyt companion (this fork)
 ```
 
 ## Availability
@@ -211,3 +253,11 @@ tools/           — generators and converters
 The BLE API is only available when the desktop apps are in developer mode
 (**Help → Troubleshooting → Enable Developer Mode**). It's intended for
 makers and developers and isn't an officially supported product feature.
+
+## Credits & license
+
+Upstream: [`anthropics/claude-desktop-buddy`](https://github.com/anthropics/claude-desktop-buddy),
+MIT-licensed, © Anthropic, PBC — see [LICENSE](LICENSE), which this fork keeps
+intact. The Linux bridge, haiku firmware, and Tidbyt companion are additions by
+this fork's maintainer; everything else is upstream's, including the wire
+protocol in [REFERENCE.md](REFERENCE.md) and the ASCII pets.
