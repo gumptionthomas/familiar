@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Least privilege: the test job only needs to read the repo.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: bridge tests (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]   # floor + latest (Pillow 12 behaved differently)
+    defaults:
+      run:
+        working-directory: linux-bridge
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up uv + Python
+        uses: astral-sh/setup-uv@v5
+        with:
+          python-version: ${{ matrix.python }}
+          enable-cache: true
+      - name: Run the test suite
+        run: uv run pytest -q
