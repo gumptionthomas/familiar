@@ -1,0 +1,22 @@
+# Dependabot: keep deps current, but wait 7 days after a release before
+# proposing it — a cooldown against freshly-published (possibly compromised)
+# versions. Pairs with SHA-pinned Actions.
+version: 2
+updates:
+  # Python dependencies for the Linux bridge (uv project)
+  - package-ecosystem: "uv"
+    directory: "/linux-bridge"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+
+  # GitHub Actions used by CI — Dependabot bumps the pinned SHAs when a new
+  # version has been out for the cooldown period.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    cooldown:
+      default-days: 7
