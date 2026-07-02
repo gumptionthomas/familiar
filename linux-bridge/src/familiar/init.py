@@ -1,9 +1,8 @@
-"""`familiar init` — write config, wire Claude Code hooks, optional service,
-and migrate an existing claude-buddy install. Interactive by default."""
+"""`familiar init` — write config, wire Claude Code hooks, optional service.
+Interactive by default."""
 import argparse
 import json
 import os
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -28,12 +27,11 @@ def merge_hooks(settings: dict) -> dict:
     hooks = {k: list(v) for k, v in out.get("hooks", {}).items()}
     for evt, name in EVENTS.items():
         groups = hooks.get(evt, [])
-        # drop any prior familiar/claude-buddy group for this event
+        # drop any prior familiar group for this event (idempotent re-runs)
         kept = []
         for grp in groups:
             cmds = [h.get("command", "") for h in grp.get("hooks", [])]
-            if any(c.startswith("familiar hook ") or c.startswith("claude-buddy-hook")
-                   for c in cmds):
+            if any(c.startswith("familiar hook ") for c in cmds):
                 continue
             kept.append(grp)
         kept.append(_entry(evt, name))
@@ -56,18 +54,6 @@ def _write_hooks(settings_path: Path):
         cur = {}
         settings_path.parent.mkdir(parents=True, exist_ok=True)
     settings_path.write_text(json.dumps(merge_hooks(cur), indent=2) + "\n")
-
-
-def migrate(old_cfg_dir, new_cfg_dir, settings_path):
-    old_cfg_dir, new_cfg_dir = Path(old_cfg_dir), Path(new_cfg_dir)
-    old_toml = old_cfg_dir / "config.toml"
-    new_toml = new_cfg_dir / "config.toml"
-    if old_toml.exists() and not new_toml.exists():
-        new_cfg_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(old_toml, new_toml)
-    sp = Path(settings_path)
-    if sp.exists():
-        _write_hooks(sp)   # merge_hooks rewrites claude-buddy-hook -> familiar hook
 
 
 def _prompt(label, default=""):
@@ -95,15 +81,6 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
 
     cfg_path = _default_config_path()
-    old_cfg = cfg_path.parent.with_name("claude-buddy")
-    if old_cfg.exists() and old_cfg != cfg_path.parent:
-        print(f"Migrating existing claude-buddy setup from {old_cfg} ...")
-        migrate(str(old_cfg), str(cfg_path.parent), str(_settings_path()))
-        _swap_service()
-        print("Migrated (service swapped: claude-buddy → familiar). "
-              "You can `uv tool uninstall claude-buddy` when ready.")
-        return 0
-
     interactive = not (a.yes or a.tidbyt_device)
     values = {
         "tidbyt_device_id": a.tidbyt_device or (_prompt("Tidbyt device id") if interactive else ""),
@@ -119,12 +96,6 @@ def main(argv=None) -> int:
         _install_service()
     print("Done. Start with `familiar run` (or the service).")
     return 0
-
-
-def _swap_service():
-    # Best-effort: stop/disable the old claude-buddy user service, install+enable familiar's.
-    os.system("systemctl --user disable --now claude-buddy.service 2>/dev/null")  # noqa: S605
-    _install_service()
 
 
 def _install_service():
