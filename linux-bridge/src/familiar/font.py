@@ -11,7 +11,9 @@ _BDF = os.path.join(os.path.dirname(__file__), "fonts", "tom-thumb.bdf")
 def _parse_bdf(path):
     glyphs, cur, code, bbx = {}, None, None, None
     reading = False
-    for line in open(path):
+    with open(path, encoding="latin-1") as f:
+        bdf_lines = f.readlines()
+    for line in bdf_lines:
         p = line.split()
         if not p:
             continue

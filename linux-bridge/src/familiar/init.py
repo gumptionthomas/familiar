@@ -1,6 +1,7 @@
 """`familiar init` — write config, wire Claude Code hooks, optional service.
 Interactive by default."""
 import argparse
+import copy
 import json
 import os
 import sys
@@ -23,20 +24,17 @@ def _entry(evt, name):
 
 
 def merge_hooks(settings: dict) -> dict:
-    out = dict(settings)
-    hooks = {k: list(v) for k, v in out.get("hooks", {}).items()}
+    # Deep-copy so callers' hook groups are never shared with the result.
+    out = copy.deepcopy(settings)
+    hooks = out.setdefault("hooks", {})
     for evt, name in EVENTS.items():
-        groups = hooks.get(evt, [])
-        # drop any prior familiar group for this event (idempotent re-runs)
-        kept = []
-        for grp in groups:
-            cmds = [h.get("command", "") for h in grp.get("hooks", [])]
-            if any(c.startswith("familiar hook ") for c in cmds):
-                continue
-            kept.append(grp)
+        # drop any prior familiar group for this event (idempotent re-runs),
+        # keep foreign hooks, then append our canonical entry.
+        kept = [grp for grp in hooks.get(evt, [])
+                if not any(h.get("command", "").startswith("familiar hook ")
+                           for h in grp.get("hooks", []))]
         kept.append(_entry(evt, name))
         hooks[evt] = kept
-    out["hooks"] = hooks
     return out
 
 
@@ -68,7 +66,7 @@ def _write_config(cfg_path: Path, values: dict):
     for k, v in values.items():
         if v and f"{k} " not in existing and f"{k}=" not in existing:
             lines.append(f'{k} = "{v}"')
-    cfg_path.write_text("\n".join(l for l in lines if l) + "\n")
+    cfg_path.write_text("\n".join(ln for ln in lines if ln) + "\n")
 
 
 def main(argv=None) -> int:

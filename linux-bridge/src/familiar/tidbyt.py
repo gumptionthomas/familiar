@@ -36,7 +36,7 @@ async def push_image(webp_bytes, *, device_id, api_token,
                "Content-Type": "application/json"}
     url = PUSH_URL % device_id
     try:
-        status = await asyncio.get_event_loop().run_in_executor(
+        status = await asyncio.get_running_loop().run_in_executor(
             None, post, url, body, headers)
         return status == 200
     except Exception:

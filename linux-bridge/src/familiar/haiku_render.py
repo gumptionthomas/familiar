@@ -73,5 +73,5 @@ def render(lines) -> bytes:
     frames = [strip.crop((0, off, W, off + H)) for off in steps]
     buf = io.BytesIO()
     frames[0].save(buf, format="WEBP", save_all=True, append_images=frames[1:],
-                   duration=[FRAME_MS] * len(frames), loop=0, lossless=True)
+                   duration=FRAME_MS, loop=0, lossless=True)
     return buf.getvalue()

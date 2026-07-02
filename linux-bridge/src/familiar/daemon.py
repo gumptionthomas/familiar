@@ -65,7 +65,7 @@ class Bridge:
         self._dirty = asyncio.Event()
 
     def _loop_time(self):
-        return asyncio.get_event_loop().time()
+        return asyncio.get_running_loop().time()
 
     def _maybe_roll_today(self):
         d = date.today()
@@ -117,7 +117,7 @@ class Bridge:
     async def _await_reply(self, path, tries=30, interval=0.15):
         # Poll for the turn's final reply (the closing assistant text), requiring
         # the same value twice so a mid-flush read can't win. Returns "" if none.
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         prev = None
         for _ in range(tries):
             try:
@@ -135,7 +135,7 @@ class Bridge:
         # The celebrate/heart window was opened synchronously in _track_turn.
         reply = await self._await_reply(path)
         # Credit this turn's output tokens (feeds the pet's level).
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         try:
             toks = await loop.run_in_executor(
                 None, transcript.turn_output_tokens, path)
@@ -158,7 +158,7 @@ class Bridge:
         # gate; the in-flight guard coalesces bursts either way.
         if self._compose is None or self._composing:
             return
-        now = asyncio.get_event_loop().time()
+        now = asyncio.get_running_loop().time()
         if not force and now - self._last_haiku < self.haiku_periodic:
             return
         self._composing = True
@@ -169,7 +169,7 @@ class Bridge:
             lines = await self._compose(digest)
             if lines:
                 self.store.set_haiku(lines)
-                self._last_haiku = asyncio.get_event_loop().time()
+                self._last_haiku = asyncio.get_running_loop().time()
                 self._dirty.set()
                 if self._tidbyt:
                     asyncio.create_task(self._tidbyt_haiku(lines))
@@ -371,7 +371,7 @@ def main(argv=None) -> int:
     argv = argv if argv is not None else sys.argv[1:]
     ap = argparse.ArgumentParser(prog="familiar run")
     ap.add_argument("--stdout", action="store_true",
-                    help="print heartbeats instead of sending over BLE")
+                    help="dry run: print heartbeats to stdout, drive no device")
     args = ap.parse_args(argv)
     cfg = load()
     compose = _make_compose(cfg)

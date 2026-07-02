@@ -21,5 +21,7 @@ class StdoutTransport:
 
 
 class NullTransport:
+    """Discards heartbeats — used when running Tidbyt-only (no M5)."""
+
     async def send(self, data: bytes) -> None:
-        return None
+        """No device to feed; drop it."""

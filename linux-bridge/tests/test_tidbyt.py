@@ -51,3 +51,11 @@ def test_push_renders_then_pushes(monkeypatch):
 
 def test_push_empty_lines_is_false():
     assert asyncio.run(tidbyt.push(["", "", ""], device_id="d", api_token="t")) is False
+
+
+def test_push_image_missing_token_is_false():
+    assert asyncio.run(tidbyt.push_image(b"x", device_id="d", api_token="")) is False
+
+
+def test_push_image_empty_bytes_is_false():
+    assert asyncio.run(tidbyt.push_image(b"", device_id="d", api_token="t")) is False

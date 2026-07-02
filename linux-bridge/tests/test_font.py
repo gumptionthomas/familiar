@@ -23,3 +23,12 @@ def test_draw_text_sets_pixels():
     colors = {c for _, c in im.getcolors()}
     assert (0, 0, 0) in colors          # background present (not entirely white)
     assert (255, 255, 255) in colors    # glyph pixels drawn
+
+
+def test_known_glyphs_pin_bitmaps():
+    # Pin exact bitmaps so a regression in _normalize's baseline math is caught.
+    assert font.GLYPHS["A"] == [[0, 1, 0, 0], [1, 0, 1, 0], [1, 1, 1, 0],
+                                [1, 0, 1, 0], [1, 0, 1, 0], [0, 0, 0, 0]]
+    # 'g' has a descender: ink on the bottom rows, below the baseline.
+    assert font.GLYPHS["g"] == [[0, 0, 0, 0], [0, 1, 1, 0], [1, 0, 1, 0],
+                                [1, 1, 1, 0], [0, 0, 1, 0], [0, 1, 0, 0]]

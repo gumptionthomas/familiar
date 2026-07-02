@@ -68,7 +68,7 @@ async def compose(digest, *, api_key, model="claude-haiku-4-5-20251001",
         if request is not None:
             text = await request(digest)
         else:
-            loop = asyncio.get_event_loop()
+            loop = asyncio.get_running_loop()
             text = await loop.run_in_executor(
                 None, _post, api_key, model, digest, timeout)
     except Exception:
