@@ -160,3 +160,82 @@ def test_fail_streak_success_resets():
     assert s.failure() is False   # 1 again
     assert s.failure() is False   # 2
     assert s.failure() is True    # 3
+
+
+def test_ble_link_loop_clears_phantom_after_threshold(tmp_path):
+    # After the failure threshold, the loop issues a best-effort disconnect for
+    # the configured address (phantom_after=1 so the first failure triggers it).
+    async def run():
+        store = SessionStore()
+        bridge = Bridge(store, NullTransport(), str(tmp_path / "s.sock"))
+        cleared = []
+
+        async def fake_disconnect(address):
+            cleared.append(address)
+
+        def connect(address, disconnected_callback=None):
+            raise OSError("device not found")
+
+        cfg = Config(address="AA:BB", owner="", socket_path=str(tmp_path / "s.sock"))
+
+        async def on_connect(transport, owner):
+            pass
+
+        task = asyncio.ensure_future(ble._ble_link_loop(
+            cfg, bridge, on_connect, connector=connect,
+            disconnect=fake_disconnect, phantom_after=1))
+        try:
+            for _ in range(200):
+                await asyncio.sleep(0)
+                if cleared:
+                    break
+            assert cleared == ["AA:BB"]     # phantom clear issued for the M5 address
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    asyncio.run(run())
+
+
+def test_ble_link_loop_no_clear_without_address(tmp_path, monkeypatch):
+    # A genuinely absent device (resolve fails -> address is None) is NOT a
+    # phantom: the loop must never issue a disconnect.
+    async def run():
+        store = SessionStore()
+        bridge = Bridge(store, NullTransport(), str(tmp_path / "s.sock"))
+        cleared = []
+
+        async def fake_disconnect(address):
+            cleared.append(address)
+
+        async def boom_resolve(cfg):
+            raise RuntimeError("scanner exploded")
+
+        monkeypatch.setattr(ble, "_resolve_address", boom_resolve)
+
+        def connect(address, disconnected_callback=None):
+            raise AssertionError("must not connect when resolve fails")
+
+        cfg = Config(address=None, owner="", socket_path=str(tmp_path / "s.sock"))
+
+        async def on_connect(transport, owner):
+            pass
+
+        task = asyncio.ensure_future(ble._ble_link_loop(
+            cfg, bridge, on_connect, connector=connect,
+            disconnect=fake_disconnect, phantom_after=1))
+        try:
+            for _ in range(200):
+                await asyncio.sleep(0)
+            assert cleared == []            # absent device != phantom, no disconnect
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    asyncio.run(run())

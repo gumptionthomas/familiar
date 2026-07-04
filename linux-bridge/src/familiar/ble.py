@@ -81,18 +81,39 @@ async def _ble_session(bridge, on_connect, owner, connect, address,
             bridge.transport = NullTransport()
 
 
-async def _ble_link_loop(cfg, bridge, on_connect, connector=None) -> None:
-    connect = connector or BleakClient
-    backoff = 1.0
+async def _bluetoothctl_disconnect(address) -> None:
+    # Clear a stale BlueZ link ("phantom") that leaves the device 'connected' at
+    # the OS level while bleak can't reach it. Mirrors the manual
+    # `bluetoothctl disconnect <MAC>` remedy. Best-effort: any failure (missing
+    # binary, non-zero exit, timeout) is swallowed — we retry the connect either
+    # way.
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "bluetoothctl", "disconnect", address,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL)
+        await asyncio.wait_for(proc.wait(), timeout=10)
+    except Exception:
+        pass
 
-    def reset_backoff():
+
+async def _ble_link_loop(cfg, bridge, on_connect, connector=None,
+                         disconnect=None, phantom_after=3) -> None:
+    connect = connector or BleakClient
+    clear_phantom = disconnect or _bluetoothctl_disconnect
+    backoff = 1.0
+    streak = _FailStreak(phantom_after)
+
+    def on_up():
         nonlocal backoff
         backoff = 1.0
+        streak.success()
 
     while True:
         # Everything BLE-related is inside the try: a scan/connect/link failure
         # must only back off and retry, never escape and cancel the persistent
-        # bridge (which would refreeze the Tidbyt — the bug this fix undoes).
+        # bridge (which would refreeze the Tidbyt — the bug the decouple undoes).
+        address = None
         try:
             address = await _resolve_address(cfg)
             if not address:
@@ -100,13 +121,18 @@ async def _ble_link_loop(cfg, bridge, on_connect, connector=None) -> None:
                       "have you paired with bluetoothctl?")
             else:
                 await _ble_session(bridge, on_connect, cfg.owner, connect,
-                                   address, on_connected=reset_backoff)
+                                   address, on_connected=on_up)
                 print(f"[familiar] link dropped; reconnecting {address}")
                 await asyncio.sleep(1)         # brief settle, guard against flap
-                continue                       # backoff already reset on connect
+                continue                       # backoff/streak reset on connect
         except Exception as e:
             bridge.transport = NullTransport()  # ensure detached on any failure
             print(f"[familiar] disconnected: {e}")
+            # After repeated failures with a known address, a stale BlueZ link
+            # ("phantom") is the likely cause; clear it and keep retrying.
+            if address and streak.failure():
+                print(f"[familiar] clearing a possible stale link to {address}")
+                await clear_phantom(address)
         await asyncio.sleep(min(backoff, 30))
         backoff = min(backoff * 2, 30)
 
