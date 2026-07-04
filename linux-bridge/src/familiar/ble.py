@@ -87,6 +87,7 @@ async def _bluetoothctl_disconnect(address) -> None:
     # `bluetoothctl disconnect <MAC>` remedy. Best-effort: any failure (missing
     # binary, non-zero exit, timeout) is swallowed — we retry the connect either
     # way.
+    proc = None
     try:
         proc = await asyncio.create_subprocess_exec(
             "bluetoothctl", "disconnect", address,
@@ -94,7 +95,12 @@ async def _bluetoothctl_disconnect(address) -> None:
             stderr=asyncio.subprocess.DEVNULL)
         await asyncio.wait_for(proc.wait(), timeout=10)
     except Exception:
-        pass
+        # On timeout (or any error) don't leave a wedged child lingering.
+        if proc is not None and proc.returncode is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
 
 
 async def _ble_link_loop(cfg, bridge, on_connect, connector=None,
@@ -117,6 +123,8 @@ async def _ble_link_loop(cfg, bridge, on_connect, connector=None,
         try:
             address = await _resolve_address(cfg)
             if not address:
+                # No address = a genuinely absent device, not a phantom, so the
+                # failure streak / phantom-clear intentionally does not apply.
                 print("[familiar] no Claude- device found; is it awake? "
                       "have you paired with bluetoothctl?")
             else:
