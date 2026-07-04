@@ -11,6 +11,24 @@ NAME_PREFIX = "Claude-"
 CHUNK = 180
 
 
+class _FailStreak:
+    """Counts consecutive connect failures; signals when to clear the link."""
+    def __init__(self, threshold: int):
+        self.threshold = threshold
+        self.count = 0
+
+    def failure(self) -> bool:
+        # Return True (and reset) once `threshold` consecutive failures are seen.
+        self.count += 1
+        if self.count >= self.threshold:
+            self.count = 0
+            return True
+        return False
+
+    def success(self) -> None:
+        self.count = 0
+
+
 class BleTransport:
     def __init__(self, client: BleakClient, rx_uuid: str = NUS_RX):
         self._client = client

@@ -140,3 +140,23 @@ def test_run_with_ble_survives_resolve_error(tmp_path, monkeypatch):
                 pass
 
     asyncio.run(run())
+
+
+def test_fail_streak_signals_at_threshold():
+    s = ble._FailStreak(3)
+    assert s.failure() is False   # 1
+    assert s.failure() is False   # 2
+    assert s.failure() is True    # 3 -> signal and reset
+    assert s.failure() is False   # streak reset -> 1 again
+    assert s.failure() is False   # 2
+    assert s.failure() is True    # 3
+
+
+def test_fail_streak_success_resets():
+    s = ble._FailStreak(3)
+    assert s.failure() is False   # 1
+    assert s.failure() is False   # 2
+    s.success()                   # reset mid-streak
+    assert s.failure() is False   # 1 again
+    assert s.failure() is False   # 2
+    assert s.failure() is True    # 3
