@@ -13,8 +13,8 @@ def calendar_mood(dt):
     weekend, friday = wd >= 5, wd == 4
     if 1 <= h < 7:          return ("sleep", None)
     if weekend:             return ("sleep", "heart")
-    if h >= 22 or h == 0:   return ("sleep", "dizzy")
-    if h < 9:               return ("sleep", "idle")
+    if h < 9:               return ("sleep", "idle")     # early morning, incl. midnight
     if h == 12:             return ("idle",  "heart")
-    if friday and h >= 15:  return ("idle",  "celebrate")
+    if friday and h >= 15:  return ("idle",  "celebrate")  # TGIF through 11:59pm
+    if h >= 22:             return ("sleep", "dizzy")     # 10-11:59pm
     return ("idle", "sleep")

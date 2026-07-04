@@ -38,8 +38,14 @@ def test_late_night_dizzy():
     assert calendar_mood(datetime(2026, 7, 8, 23, 0)) == ("sleep", "dizzy") # Wed 11pm
 
 
-def test_midnight_hour_dizzy():
-    assert calendar_mood(datetime(2026, 7, 8, 0, 30)) == ("sleep", "dizzy") # Wed 00:30
+def test_midnight_hour_is_early_morning_idle():
+    # Midnight (hour 0) falls into the early-morning group on the M5, not dizzy.
+    assert calendar_mood(datetime(2026, 7, 8, 0, 30)) == ("sleep", "idle")  # Wed 00:30
+
+
+def test_friday_night_still_tgif():
+    # TGIF runs through 11:59pm; celebrate beats the late-night dizzy on the M5.
+    assert calendar_mood(datetime(2026, 7, 10, 22, 0)) == ("idle", "celebrate")  # Fri 10pm
 
 
 def test_normal_daytime_idle():
