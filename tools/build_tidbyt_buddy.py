@@ -8,7 +8,7 @@ import os
 from PIL import Image
 
 SRC = "characters/bufo"
-DST = "linux-bridge/src/claude_buddy/tidbyt_buddy"
+DST = "linux-bridge/src/familiar/tidbyt_buddy"
 W, H = 64, 32
 # The source GIFs run frantically fast on the panel (busy = a 2-frame 40ms
 # flicker). Slow every frame ~3x with a floor, kept under the 15s Tidbyt cap.
@@ -16,7 +16,8 @@ SLOWDOWN = 3
 MIN_FRAME_MS = 120
 MAX_ANIM_MS = 14500
 STATES = ["idle_0", "idle_1", "idle_2", "idle_3", "idle_4", "idle_5", "idle_6",
-          "idle_7", "idle_8", "busy", "attention", "celebrate", "sleep", "heart"]
+          "idle_7", "idle_8", "busy", "attention", "celebrate", "sleep", "heart",
+          "dizzy"]
 
 
 def convert(gif_path, out_path):
