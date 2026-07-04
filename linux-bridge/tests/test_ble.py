@@ -98,3 +98,45 @@ def test_run_with_ble_bridge_runs_when_ble_unavailable(tmp_path):
                 pass
 
     asyncio.run(run())
+
+
+def test_run_with_ble_survives_resolve_error(tmp_path, monkeypatch):
+    # A scan/resolve failure must NOT propagate out and cancel the persistent
+    # bridge — otherwise the decoupling is undone (Tidbyt refreezes).
+    async def run():
+        sock = str(tmp_path / "familiar.sock")
+        store = SessionStore()
+        calls = {"n": 0}
+
+        async def boom_resolve(cfg):
+            calls["n"] += 1
+            raise RuntimeError("scanner exploded")
+
+        monkeypatch.setattr(ble, "_resolve_address", boom_resolve)
+
+        def connect(address, disconnected_callback=None):
+            raise AssertionError("must not reach connect when resolve fails")
+
+        cfg = Config(address=None, owner="", socket_path=sock)
+
+        async def on_connect(transport, owner):
+            pass
+
+        task = asyncio.ensure_future(
+            ble.run_with_ble(cfg, store, on_connect, connector=connect))
+        try:
+            for _ in range(500):
+                await asyncio.sleep(0)
+                if os.path.exists(sock) and calls["n"] >= 1:
+                    break
+            assert os.path.exists(sock)          # bridge still bound its socket
+            assert calls["n"] >= 1               # resolve was attempted and threw
+            assert not task.done()               # ...but it did NOT kill the daemon
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    asyncio.run(run())

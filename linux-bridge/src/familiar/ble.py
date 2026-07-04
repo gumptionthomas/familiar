@@ -31,7 +31,8 @@ async def _resolve_address(cfg) -> str | None:
     return dev.address if dev else None
 
 
-async def _ble_session(bridge, on_connect, owner, connect, address) -> None:
+async def _ble_session(bridge, on_connect, owner, connect, address,
+                       on_connected=None) -> None:
     # One connect -> serve -> disconnect cycle. Attaches a live BleTransport to
     # the already-running bridge for the duration of the link, then restores
     # NullTransport so the bridge's other loops (Tidbyt, haiku, sweep) keep
@@ -42,6 +43,8 @@ async def _ble_session(bridge, on_connect, owner, connect, address) -> None:
         disconnected_callback=lambda _c: disconnected.set(),
     ) as client:
         print(f"[familiar] connected {address}")
+        if on_connected:
+            on_connected()          # link is up -> reset the reconnect backoff
         # TX notify is encrypted-only; subscribing forces the encrypted link up
         # (and lets the device send acks).
         try:
@@ -63,23 +66,31 @@ async def _ble_session(bridge, on_connect, owner, connect, address) -> None:
 async def _ble_link_loop(cfg, bridge, on_connect, connector=None) -> None:
     connect = connector or BleakClient
     backoff = 1.0
+
+    def reset_backoff():
+        nonlocal backoff
+        backoff = 1.0
+
     while True:
-        address = await _resolve_address(cfg)
-        if not address:
-            print("[familiar] no Claude- device found; is it awake? "
-                  "have you paired with bluetoothctl?")
-            await asyncio.sleep(min(backoff, 30))
-            backoff = min(backoff * 2, 30)
-            continue
+        # Everything BLE-related is inside the try: a scan/connect/link failure
+        # must only back off and retry, never escape and cancel the persistent
+        # bridge (which would refreeze the Tidbyt — the bug this fix undoes).
         try:
-            await _ble_session(bridge, on_connect, cfg.owner, connect, address)
-            print(f"[familiar] link dropped; reconnecting {address}")
-            backoff = 1.0                      # clean drop -> retry promptly
+            address = await _resolve_address(cfg)
+            if not address:
+                print("[familiar] no Claude- device found; is it awake? "
+                      "have you paired with bluetoothctl?")
+            else:
+                await _ble_session(bridge, on_connect, cfg.owner, connect,
+                                   address, on_connected=reset_backoff)
+                print(f"[familiar] link dropped; reconnecting {address}")
+                await asyncio.sleep(1)         # brief settle, guard against flap
+                continue                       # backoff already reset on connect
         except Exception as e:
             bridge.transport = NullTransport()  # ensure detached on any failure
             print(f"[familiar] disconnected: {e}")
-            await asyncio.sleep(min(backoff, 30))
-            backoff = min(backoff * 2, 30)
+        await asyncio.sleep(min(backoff, 30))
+        backoff = min(backoff * 2, 30)
 
 
 async def run_with_ble(cfg, store, on_connect, compose=None, tidbyt=None,
