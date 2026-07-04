@@ -75,8 +75,14 @@ def test_late_night_dizzy():
     assert calendar_mood(datetime(2026, 7, 8, 23, 0)) == ("sleep", "dizzy") # Wed 11pm
 
 
-def test_midnight_hour_dizzy():
-    assert calendar_mood(datetime(2026, 7, 8, 0, 30)) == ("sleep", "dizzy") # Wed 00:30
+def test_midnight_hour_is_early_morning_idle():
+    # Midnight (hour 0) falls into the early-morning group on the M5, not dizzy.
+    assert calendar_mood(datetime(2026, 7, 8, 0, 30)) == ("sleep", "idle")  # Wed 00:30
+
+
+def test_friday_night_still_tgif():
+    # TGIF runs through 11:59pm; celebrate beats the late-night dizzy on the M5.
+    assert calendar_mood(datetime(2026, 7, 10, 22, 0)) == ("idle", "celebrate")  # Fri 10pm
 
 
 def test_normal_daytime_idle():
@@ -108,17 +114,17 @@ def calendar_mood(dt):
     weekend, friday = wd >= 5, wd == 4
     if 1 <= h < 7:          return ("sleep", None)
     if weekend:             return ("sleep", "heart")
-    if h < 9:               return ("sleep", "idle")
+    if h < 9:               return ("sleep", "idle")     # early morning, incl. midnight
     if h == 12:             return ("idle",  "heart")
-    if friday and h >= 15:  return ("idle",  "celebrate")
-    if h >= 22 or h == 0:   return ("sleep", "dizzy")
+    if friday and h >= 15:  return ("idle",  "celebrate")  # TGIF through 11:59pm
+    if h >= 22:             return ("sleep", "dizzy")     # 10-11:59pm
     return ("idle", "sleep")
 ```
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cd linux-bridge && uv run pytest tests/test_calendar_mood.py -q`
-Expected: PASS — 11 passed.
+Expected: PASS — 12 passed.
 
 - [ ] **Step 5: Commit**
 
@@ -285,7 +291,7 @@ def test_persona_sleeps_after_quiet_stretch():
 - [ ] **Step 8: Run the full suite**
 
 Run: `cd linux-bridge && uv run pytest -q`
-Expected: PASS — all tests green (135 existing + 11 from Task 1 + 5 new here = 151).
+Expected: PASS — all tests green (137 existing + 12 from Task 1 + 5 new here = 154).
 
 - [ ] **Step 9: Commit**
 

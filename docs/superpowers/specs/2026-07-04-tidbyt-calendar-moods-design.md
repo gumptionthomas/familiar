@@ -42,8 +42,8 @@ mirroring the M5's table.
    the existing ~300s window after activity stops; only then does the calendar
    personality take over. Mirrors the M5, whose moods appear only once it's in
    clock/screensaver mode. The pet won't nod off the instant you stop typing.
-   The late-night `dizzy` window is hours 22, 23, 0 (10pm–12:59am); the deep
-   1–7am sleep branch covers 1am onward, so the two don't overlap.
+   The `dizzy` window is hours 22–23 (10–11:59pm); the midnight hour falls into
+   the early-morning group and 1–7am is deep sleep, exactly matching the M5.
 3. **`dizzy` — build the asset.** A generic Tidbyt-native dizzy (each species'
    idle pose + an orbiting "woozy" particle), rendered for all 18 ASCII species
    and bufo. bufo already ships a `dizzy.gif` source.
@@ -60,12 +60,17 @@ port of the M5's precedence:
 | Before 9am (weekday) | `sleep` | `idle` | `h<9` |
 | Noon (12:00–12:59) | `idle` | `heart` | `h==12` |
 | **Friday ≥ 3pm** | `idle` | `celebrate` | `friday && h>=15` |
-| 10pm–12:59am (hours 22, 23, 0) | `sleep` | `dizzy` | `h>=22 || h==0` |
+| 10pm–11:59pm (hours 22, 23) | `sleep` | `dizzy` | `h>=22` |
 | Otherwise (daytime) | `idle` | `sleep` | else |
 
-Precedence is top-to-bottom and matters: 1–7am beats everything (including
-weekends); the weekend row beats noon / TGIF / late-night. `weekday()` is
-Python's Mon=0…Sun=6, so `friday = wd == 4` and `weekend = wd >= 5`.
+Precedence is top-to-bottom and matters, and is a **direct port of the M5's
+clock-mode order**: 1–7am beats everything (including weekends); the weekend
+row beats noon / TGIF / late-night; and — like the firmware — the `h<9`
+early-morning row is checked before the late-night row, so the **midnight hour
+(00:00–00:59) falls into the early-morning `(sleep, idle)` group, not `dizzy`**.
+The woozy window is therefore 10–11:59pm only; deep sleep covers 1–7am.
+`weekday()` is Python's Mon=0…Sun=6, so `friday = wd == 4` and `weekend =
+wd >= 5`.
 
 ```python
 def calendar_mood(dt):
@@ -73,10 +78,10 @@ def calendar_mood(dt):
     weekend, friday = wd >= 5, wd == 4
     if 1 <= h < 7:          return ("sleep", None)
     if weekend:             return ("sleep", "heart")
-    if h < 9:               return ("sleep", "idle")
+    if h < 9:               return ("sleep", "idle")     # early morning, incl. midnight
     if h == 12:             return ("idle",  "heart")
-    if friday and h >= 15:  return ("idle",  "celebrate")
-    if h >= 22 or h == 0:   return ("sleep", "dizzy")
+    if friday and h >= 15:  return ("idle",  "celebrate")  # TGIF through 11:59pm
+    if h >= 22:             return ("sleep", "dizzy")     # 10-11:59pm
     return ("idle", "sleep")
 ```
 
