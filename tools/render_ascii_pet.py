@@ -3,7 +3,7 @@
 Pulls poses with extract_buddies, lays each 5-row pose out in pixlet's
 monospace `tom-thumb` font in the species body color, overlays a generic
 per-state particle, and renders one animated 64x32 WebP per persona state to
-`src/claude_buddy/tidbyt_buddy/<species>/<state>.webp`.
+`src/familiar/tidbyt_buddy/<species>/<state>.webp`.
 
     uv run --with pillow python tools/render_ascii_pet.py src/buddies/capybara.cpp
 

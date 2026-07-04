@@ -18,6 +18,11 @@ def test_weekend_beats_noon():
     assert calendar_mood(datetime(2026, 7, 12, 12, 30)) == ("sleep", "heart") # Sun 12:30
 
 
+def test_weekend_late_night_still_heart():
+    # Weekend precedes the late-night dizzy branch: Sat 11pm stays weekend-heart.
+    assert calendar_mood(datetime(2026, 7, 11, 23, 0)) == ("sleep", "heart")  # Sat 11pm
+
+
 def test_early_weekday_sleeps_with_idle():
     assert calendar_mood(datetime(2026, 7, 6, 8, 0)) == ("sleep", "idle")   # Mon 8am
 
