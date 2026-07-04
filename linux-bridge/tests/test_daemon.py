@@ -299,6 +299,46 @@ def test_tidbyt_sync_missing_asset_does_not_raise():
     asyncio.run(b._tidbyt_sync(snap))
 
 
+def test_tidbyt_sync_successful_push_latches_current(tmp_path, monkeypatch):
+    # A successful push commits _tb_current so the same frame isn't re-pushed.
+    (tmp_path / "idle_0.webp").write_bytes(b"webp")
+    b = _bridge_tb(idle_assets=["idle_0"])
+    b._tidbyt["asset_dir"] = str(tmp_path)
+    calls = []
+
+    async def fake_push_image(data, **kw):
+        calls.append(data)
+        return True
+
+    monkeypatch.setattr(daemon.tidbyt, "push_image", fake_push_image)
+    snap = {"running": 0, "waiting": 0, "completed": False}
+    asyncio.run(b._tidbyt_sync(snap))
+    assert b._tb_current == "idle_0" and len(calls) == 1
+    asyncio.run(b._tidbyt_sync(snap))       # same persona -> guarded, no re-push
+    assert len(calls) == 1
+
+
+def test_tidbyt_sync_failed_push_does_not_latch(tmp_path, monkeypatch):
+    # A dropped push (False) must NOT latch _tb_current, so the next sync retries
+    # instead of leaving the device stuck on a stale frame (the sleep/celebrate
+    # divergence bug).
+    (tmp_path / "idle_0.webp").write_bytes(b"webp")
+    b = _bridge_tb(idle_assets=["idle_0"])
+    b._tidbyt["asset_dir"] = str(tmp_path)
+    calls = []
+
+    async def fake_push_image(data, **kw):
+        calls.append(data)
+        return False
+
+    monkeypatch.setattr(daemon.tidbyt, "push_image", fake_push_image)
+    snap = {"running": 0, "waiting": 0, "completed": False}
+    asyncio.run(b._tidbyt_sync(snap))
+    assert b._tb_current is None and len(calls) == 1     # not latched
+    asyncio.run(b._tidbyt_sync(snap))                    # retries the frame
+    assert len(calls) == 2
+
+
 def test_run_mode_selects_ble_when_address():
     assert daemon._run_mode(Config(address="AA:BB", tidbyt_device_id="d",
                                    tidbyt_api_key="k")) == "ble"
