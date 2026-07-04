@@ -6,6 +6,7 @@ import sys
 from datetime import date, datetime
 
 from . import haiku, heartbeat, tidbyt, transcript
+from .calendar_mood import calendar_mood
 from .config import load
 from .state import SessionStore
 from .transport import NullTransport, StdoutTransport
@@ -60,7 +61,10 @@ class Bridge:
         self.tb_haiku_secs = 18.0
         self.tb_celebrate_secs = 5.0
         self.tb_idle_refresh = 180.0
-        self.tb_sleep_after = 300.0     # doze off after this long with no activity
+        self.tb_sleep_after = 300.0     # normal idle before the calendar personality engages
+        self.tb_flourish_period = 300.0  # a mood flourish comes round every 5 min
+        self.tb_flourish_secs = 20.0     # and shows for ~20s of each period
+        self._wall_clock = datetime.now  # local wall clock; injectable for tests
         self.tb_heart_threshold = 5.0   # turns faster than this get heart, not confetti
         self._dirty = asyncio.Event()
 
@@ -215,8 +219,17 @@ class Bridge:
         if self._tb_active_at is None:
             self._tb_active_at = now
         if now - self._tb_active_at >= self.tb_sleep_after:
-            return "sleep"
+            return self._deep_idle_state(now)
         return "idle"
+
+    def _deep_idle_state(self, now):
+        # Past the grace window the idle pet takes on a time-of-day / day-of-week
+        # personality (the M5's clock-mode moods). A calm baseline holds, with a
+        # brief flourish for the first tb_flourish_secs of each tb_flourish_period.
+        baseline, flourish = calendar_mood(self._wall_clock())
+        if flourish and (now % self.tb_flourish_period) < self.tb_flourish_secs:
+            return flourish
+        return baseline
 
     def _tidbyt_decide(self, snap, now):
         """The buddy asset to show, or None to leave the slot unchanged."""

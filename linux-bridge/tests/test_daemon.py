@@ -1,5 +1,6 @@
 import asyncio
 import json
+from datetime import datetime
 from familiar.config import Config
 from familiar.state import SessionStore
 from familiar.transport import FakeTransport
@@ -247,6 +248,7 @@ def test_tidbyt_haiku_no_wait_without_celebration(monkeypatch):
 
 def test_persona_sleeps_after_quiet_stretch():
     b = _bridge_tb()
+    b._wall_clock = lambda: datetime(2026, 7, 8, 3, 0)   # Wed 3am -> ("sleep", None)
     b.tb_sleep_after = 300.0
     assert b._persona({"running": 0, "waiting": 0}, 1000.0) == "idle"   # latches active_at
     assert b._persona({"running": 0, "waiting": 0}, 1200.0) == "idle"   # 200s < 300s
@@ -351,3 +353,46 @@ def test_run_mode_tidbyt_only_without_address():
 
 def test_run_mode_none_when_unconfigured():
     assert daemon._run_mode(Config(address=None)) == "none"
+
+
+def test_persona_grace_window_returns_idle():
+    # Within tb_sleep_after of the last activity, calendar moods don't apply.
+    b = _bridge_tb()
+    b._wall_clock = lambda: datetime(2026, 7, 10, 16, 0)     # Fri 4pm (would be TGIF)
+    b._tb_active_at = 100.0
+    assert b._persona({}, 300.0) == "idle"                   # 200s idle < 300s grace
+
+
+def test_persona_deep_idle_returns_calendar_baseline():
+    b = _bridge_tb()
+    b._wall_clock = lambda: datetime(2026, 7, 10, 16, 0)     # Fri 4pm -> (idle, celebrate)
+    b._tb_active_at = 0.0
+    now = b.tb_sleep_after + b.tb_flourish_secs + 1.0        # deep idle, outside flourish
+    assert b._persona({}, now) == "idle"                     # baseline
+
+
+def test_persona_deep_idle_flourish_window_returns_flourish():
+    b = _bridge_tb()
+    b._wall_clock = lambda: datetime(2026, 7, 10, 16, 0)     # Fri 4pm -> flourish "celebrate"
+    b._tb_active_at = 0.0
+    now = b.tb_flourish_period * 3                           # phase 0 -> inside flourish window
+    assert now >= b.tb_sleep_after
+    assert b._persona({}, now) == "celebrate"
+
+
+def test_persona_deep_idle_late_night_dizzy():
+    b = _bridge_tb()
+    b._wall_clock = lambda: datetime(2026, 7, 8, 23, 0)      # Wed 11pm -> (sleep, dizzy)
+    b._tb_active_at = 0.0
+    base_now = b.tb_flourish_period * 2 + b.tb_flourish_secs + 5   # outside flourish
+    assert b._persona({}, base_now) == "sleep"
+    assert b._persona({}, b.tb_flourish_period * 2) == "dizzy"     # inside flourish
+
+
+def test_persona_real_activity_overrides_deep_idle():
+    b = _bridge_tb()
+    b._wall_clock = lambda: datetime(2026, 7, 10, 16, 0)
+    b._tb_active_at = 0.0
+    now = b.tb_sleep_after + 1.0
+    assert b._persona({"waiting": 1}, now) == "attention"
+    assert b._persona({"running": 1}, now) == "busy"

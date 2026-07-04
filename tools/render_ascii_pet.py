@@ -3,7 +3,7 @@
 Pulls poses with extract_buddies, lays each 5-row pose out in pixlet's
 monospace `tom-thumb` font in the species body color, overlays a generic
 per-state particle, and renders one animated 64x32 WebP per persona state to
-`src/claude_buddy/tidbyt_buddy/<species>/<state>.webp`.
+`src/familiar/tidbyt_buddy/<species>/<state>.webp`.
 
     uv run --with pillow python tools/render_ascii_pet.py src/buddies/capybara.cpp
 
@@ -21,7 +21,7 @@ import extract_buddies  # noqa: E402
 
 PIXLET = shutil.which("pixlet") or os.path.expanduser("~/.local/bin/pixlet")
 OUT_ROOT = os.path.join(os.path.dirname(__file__), os.pardir,
-                        "linux-bridge", "src", "claude_buddy", "tidbyt_buddy")
+                        "linux-bridge", "src", "familiar", "tidbyt_buddy")
 
 POSE_X, POSE_Y = 8, 1          # center ~48x30 art on the 64x32 panel
 FIRMWARE_TICK_MS = 200         # the M5 ticks the pet every 200ms (main.cpp)
@@ -69,6 +69,15 @@ def _particle(state, i, n):
             y = (i * 3 + k * 5) % 22
             ch = "*" if (i + k) % 2 else "."
             out.append((ch, x, y, _CONFETTI[k % len(_CONFETTI)]))
+        return out
+    if state == "dizzy":
+        # Two little stars orbiting above the head — a woozy spin. Positions are
+        # a 4-point loop at head height; the two stars sit opposite each other.
+        orbit = [(30, 1), (36, 3), (34, 6), (28, 4)]
+        out = []
+        for k in range(2):
+            x, y = orbit[(i + k * 2) % len(orbit)]
+            out.append(("*", x, y, "#c9a0ff"))
         return out
     # idle: no particle — the blink/chew/look-around poses carry the liveness.
     return []
@@ -129,27 +138,35 @@ def _star(state, data):
         "    ]))\n" % (delay, body))
 
 
+def _render_one(out_dir, state, data):
+    # pixlet treats the .star's directory as the app bundle and globs sibling
+    # *.star files, so give each render its own clean dir.
+    tmp = tempfile.mkdtemp()
+    star_path = os.path.join(tmp, "app.star")
+    with open(star_path, "w") as f:
+        f.write(_star(state, data))
+    out = os.path.join(out_dir, state + ".webp")
+    try:
+        subprocess.run([PIXLET, "render", star_path, "-o", out],
+                       check=True, capture_output=True, text=True)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    print("%-10s %2d frames -> %s" % (state, len(data["frames"]), out))
+
+
 def render_species(cpp_path):
     name = os.path.splitext(os.path.basename(cpp_path))[0]
     states = extract_buddies.extract(cpp_path)
     out_dir = os.path.join(OUT_ROOT, name)
     os.makedirs(out_dir, exist_ok=True)
     for state, data in states.items():
-        if not data["frames"]:
-            continue
-        # pixlet treats the .star's directory as the app bundle and globs
-        # sibling *.star files, so give each render its own clean dir.
-        tmp = tempfile.mkdtemp()
-        star_path = os.path.join(tmp, "app.star")
-        with open(star_path, "w") as f:
-            f.write(_star(state, data))
-        out = os.path.join(out_dir, state + ".webp")
-        try:
-            subprocess.run([PIXLET, "render", star_path, "-o", out],
-                           check=True, capture_output=True, text=True)
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
-        print("%-10s %2d frames -> %s" % (state, len(data["frames"]), out))
+        if data["frames"]:
+            _render_one(out_dir, state, data)
+    # dizzy has no pose art of its own; synthesize it from the idle pose plus
+    # the woozy particle so every species has a late-night mood.
+    idle = states.get("idle")
+    if idle and idle["frames"]:
+        _render_one(out_dir, "dizzy", idle)
     return out_dir
 
 
