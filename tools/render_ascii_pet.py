@@ -71,9 +71,11 @@ def _particle(state, i, n):
             out.append((ch, x, y, _CONFETTI[k % len(_CONFETTI)]))
         return out
     if state == "dizzy":
-        # Two little stars orbiting above the head — a woozy spin. Positions are
-        # a 4-point loop at head height; the two stars sit opposite each other.
-        orbit = [(30, 1), (36, 3), (34, 6), (28, 4)]
+        # Two little stars circling the head — a woozy spin. A 4-point loop
+        # kept high (y 0-4) and to the upper corners, off the centered head art
+        # (ears/caps/antennae) that taller species reach into. The two stars sit
+        # opposite each other, so at any frame they straddle the head diagonally.
+        orbit = [(22, 1), (38, 0), (42, 3), (26, 4)]
         out = []
         for k in range(2):
             x, y = orbit[(i + k * 2) % len(orbit)]
