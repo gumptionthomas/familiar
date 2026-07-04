@@ -241,15 +241,19 @@ class Bridge:
         asset = self._tidbyt_decide(snap, self._loop_time())
         if asset is None or asset == self._tb_current:
             return
-        self._tb_current = asset
         tb = self._tidbyt
         path = os.path.join(tb["asset_dir"], asset + ".webp")
         try:
             with open(path, "rb") as f:
-                await tidbyt.push_image(f.read(), device_id=tb["device_id"],
-                                        api_token=tb["api_token"])
+                data = f.read()
         except Exception:
-            pass
+            return
+        # Only latch _tb_current on a confirmed push; a dropped frame (network
+        # blip, non-200) must stay un-committed so the next sync retries it
+        # rather than leaving the device stuck on a stale frame.
+        if await tidbyt.push_image(data, device_id=tb["device_id"],
+                                   api_token=tb["api_token"]):
+            self._tb_current = asset
 
     async def serve(self):
         if os.path.exists(self.socket_path):
