@@ -1014,7 +1014,6 @@ void loop() {
   uint32_t now = millis();
 
   dataPoll(&tama);
-  envPoll();
   static uint16_t feedGenSeen = 0;
   if (tama.lineGen != feedGenSeen) { feedGenSeen = tama.lineGen; lastFeedChangeMs = now; }
   if (statsPollLevelUp()) triggerOneShot(P_CELEBRATE, 3000);
