@@ -20,6 +20,7 @@ static void startBt() {
 
 #include "character.h"
 #include "stats.h"
+#include "env.h"
 const int W = 135, H = 240;
 const int CX = W / 2;
 const int CY_BASE = 120;
@@ -122,9 +123,9 @@ static void sendCmd(const char* json) {
   bleWrite((const uint8_t*)json, n);
   bleWrite((const uint8_t*)"\n", 1);
 }
-const uint8_t INFO_PAGES = 6;
+const uint8_t INFO_PAGES = 7;
 const uint8_t INFO_PG_BUTTONS = 1;
-const uint8_t INFO_PG_CREDITS = 5;
+const uint8_t INFO_PG_CREDITS = 6;
 
 void applyDisplayMode() {
   bool peek = displayMode != DISP_NORMAL;
@@ -635,6 +636,26 @@ void drawInfo() {
     ln("  temp     %dC", (int)M5.Axp.GetTempInAXP192());
 
   } else if (infoPage == 4) {
+    _infoHeader(p, y, "ENV", infoPage);
+    if (envPresent()) {
+      spr.setTextColor(p.textDim, p.bg);
+      ln("  temp      %d F", envTempF());
+      ln("  humidity  %d %%", envHumidityPct());
+      ln("  pressure  %d hPa", envPressureHpa());
+      y += 4;
+      spr.setTextColor(GREEN, p.bg);
+      ln("  sensor    ok");
+    } else {
+      spr.setTextColor(p.textDim, p.bg);
+      ln("  temp      -- F");
+      ln("  humidity  -- %%");
+      ln("  pressure  -- hPa");
+      y += 4;
+      spr.setTextColor(HOT, p.bg);
+      ln("  sensor    not found");
+    }
+
+  } else if (infoPage == 5) {
     _infoHeader(p, y, "BLUETOOTH", infoPage);
     bool linked = settings().bt && dataBtActive();
 
@@ -949,6 +970,7 @@ void setup() {
   settingsLoad();
   petNameLoad();
   buddyInit();
+  envInit();   // ENV-III HAT on Wire/I2C0 (G0/G26); no-op if not mounted
 
   // BLE stays always-on; s.bt is stored as a preference only.
   spr.createSprite(W, H);
