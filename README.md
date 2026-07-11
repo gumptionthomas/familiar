@@ -175,6 +175,16 @@ If you're iterating on a character and would rather skip the BLE round-trip,
 `tools/flash_character.py characters/bufo` stages it into `data/` and runs
 `pio run -t uploadfs` directly over USB.
 
+## Environment sensor (this fork)
+
+Mount an [M5Stack ENV-III HAT](https://docs.m5stack.com/en/hat/hat_envIII)
+(SHT30 + QMP6988) on the stick's bottom header and it reads the room: a new
+**ENV** info page shows ambient temperature, humidity, and barometric pressure,
+and the portrait charging clock gains a compact temp + humidity line under the
+time. Entirely optional — without the HAT, nothing changes. The sensor sits on
+its own I²C bus and is read on a separate core, so it never disturbs the pet,
+the IMU, or the animation loop.
+
 ## Tidbyt companion
 
 The Linux bridge can also drive a [Tidbyt](https://tidbyt.com) 64×32 LED matrix.
@@ -222,6 +232,7 @@ src/
   data.h         — wire protocol, JSON parse
   xfer.h         — folder push receiver
   stats.h        — NVS-backed stats, settings, owner, species choice
+  env.h          — ENV-III HAT read, own I²C bus + core (this fork)
 characters/      — example GIF character packs
 tools/           — generators and converters
   extract_buddies.py   — parse a species' poses/timing/color from its .cpp
