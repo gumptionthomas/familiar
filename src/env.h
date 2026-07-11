@@ -12,7 +12,10 @@
 #define ENV_SDA      0
 #define ENV_SCL      26
 #define ENV_SHT_ADDR 0x44   // SHT30
-#define ENV_POLL_MS  2000
+// SHT3X::update() blocks ~250ms (single-shot measure + settle), so poll
+// infrequently — ambient temp/humidity/pressure drift slowly — to keep that
+// stall from hitching the pet animation / button polling.
+#define ENV_POLL_MS  5000
 // QMP6988's I2C address depends on an SDO strap and varies by HAT batch:
 // 0x70 (SLAVE_ADDRESS_L) or 0x56 (SLAVE_ADDRESS_H). Our unit answers on 0x70;
 // try L first, then H, so either variant works.
@@ -52,7 +55,9 @@ inline void envPoll() {
   if ((int32_t)(now - _envNextPoll) < 0) return;
   _envNextPoll = now + ENV_POLL_MS;
   if (_envSht.update()) { _envFTemp = _envSht.fTemp; _envHum = _envSht.humidity; }
-  if (_envQmp.update()) { _envPa = _envQmp.pressure; }
+  // QMP6988::update() returns true even on a failed read (pressure comes back
+  // 0); keep the last good value instead of flashing a bogus 0 hPa.
+  if (_envQmp.update() && _envQmp.pressure > 0) { _envPa = _envQmp.pressure; }
 }
 
 inline bool envPresent()     { return _envPresent; }
