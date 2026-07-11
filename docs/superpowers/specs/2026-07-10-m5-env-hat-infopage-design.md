@@ -8,7 +8,7 @@ Just the sensor read + an info-page readout. **No changes to the avatar renderin
 
 ## Hardware facts (confirmed)
 
-- ENV-III HAT: **SHT30 @ 0x44**, **QMP6988 @ 0x56** (per M5 docs), on the HAT header pins **SDA = GPIO0, SCL = GPIO26**.
+- ENV-III HAT: **SHT30 @ 0x44**, **QMP6988 @ 0x70 or 0x56** (SDO-strap dependent; the M5 docs say 0x56 but *this* unit answered on **0x70** — the boot I²C scan confirmed it), on the HAT header pins **SDA = GPIO0, SCL = GPIO26**. `envInit` tries `QMP6988_SLAVE_ADDRESS_L` (0x70) then `_H` (0x56).
 - This is a **separate I²C bus** from the M5's internal one (G21/G22), which carries the AXP192, IMU (MPU6886), and RTC. The internal bus must not be disturbed.
 - GPIO0 is the boot-strapping pin — the HAT's pull-up keeps boot happy, but the "won't scan on 0/26" community reports make an explicit found/not-found check worthwhile.
 - Device flashes over **/dev/ttyUSB0** (FTDI FT232; world-writable via a udev rule).
