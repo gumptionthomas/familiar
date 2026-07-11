@@ -428,8 +428,17 @@ static void drawClock() {
     // and draw only from y=198 down.
     spr.fillRect(0, 198, W, H - 198, p.bg);
     spr.setTextDatum(MC_DATUM);
-    spr.setTextSize(2); spr.setTextColor(p.text, p.bg);    spr.drawString(hm, CX, 214);
-    spr.setTextSize(1); spr.setTextColor(p.textDim, p.bg); spr.drawString(dl, CX, 232);
+    if (envPresent()) {
+      // ENV-III HAT mounted: rebalance the strip to fit a glanceable ambient
+      // line (temp F + humidity) under time + date.
+      char el[12]; snprintf(el, sizeof(el), "%dF  %d%%", envTempF(), envHumidityPct());
+      spr.setTextSize(2); spr.setTextColor(p.text, p.bg);    spr.drawString(hm, CX, 208);
+      spr.setTextSize(1); spr.setTextColor(p.textDim, p.bg); spr.drawString(dl, CX, 224);
+                                                             spr.drawString(el, CX, 236);
+    } else {
+      spr.setTextSize(2); spr.setTextColor(p.text, p.bg);    spr.drawString(hm, CX, 214);
+      spr.setTextSize(1); spr.setTextColor(p.textDim, p.bg); spr.drawString(dl, CX, 232);
+    }
     spr.setTextDatum(TL_DATUM);
     return;
   }
