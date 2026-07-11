@@ -970,7 +970,7 @@ void setup() {
   settingsLoad();
   petNameLoad();
   buddyInit();
-  envInit();   // ENV-III HAT on Wire1 (G0/G26); no-op if not mounted
+  envInit();   // ENV-III HAT on Wire/I2C0 (G0/G26); no-op if not mounted
 
   // BLE stays always-on; s.bt is stored as a preference only.
   spr.createSprite(W, H);
