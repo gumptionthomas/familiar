@@ -62,10 +62,36 @@ def main(argv) -> int                   # the `familiar haikus` subcommand
 
 ### `append` — best-effort, never raises
 
-Called from `Bridge._haiku_tick` (`daemon.py:175`) immediately after a successful compose,
-alongside `self.store.set_haiku(lines)`. It creates the parent directory if needed, opens in
-append mode, writes one line, closes. No file handle is held between writes — haikus are
-rare, and a long-lived handle is a liability in a daemon that must survive anything.
+**Wired in `_make_compose` (`daemon.py:336-343`), not in `Bridge`.** `_make_compose` already
+closes over `cfg` — which is where the model id and the `haiku_archive` flag live — and every
+successful compose passes through it exactly once. Archiving there makes the write a
+decorator over `compose`:
+
+```python
+def _make_compose(cfg, append=None):
+    if not cfg.api_key:
+        return None
+    write = append or archive.append
+
+    async def compose(digest):
+        lines = await haiku.compose(digest, api_key=cfg.api_key, model=cfg.model)
+        if lines and cfg.haiku_archive:
+            write(lines, model=cfg.model, prompt=archive.prompt_id(haiku.SYSTEM))
+        return lines
+
+    return compose
+```
+
+`Bridge` therefore gains **no new parameter, no new state, and no knowledge that an archive
+exists** — which also means every existing `Bridge` test (which injects a fake `compose`)
+keeps passing untouched.
+
+`append` creates the parent directory if needed, opens in append mode, writes one line,
+closes. No file handle is held between writes — haikus are rare, and a long-lived handle is a
+liability in a daemon that must survive anything.
+
+`haiku.py`'s `_SYSTEM` is renamed to **`SYSTEM`** (a public module constant) so `prompt_id`
+can hash it without reaching into a private.
 
 **Every failure is swallowed and returns `False`** (unwritable path, full disk, permission
 error, a `ts` that won't serialise). This matches the existing contract in `haiku.py`
@@ -185,9 +211,11 @@ All pure and fast; no network, no device, no filesystem beyond `tmp_path`.
 7. Trope detection flags a banned word and is case-insensitive.
 8. `stats([])` returns an empty report without raising.
 9. Grouping by prompt version splits records correctly.
-10. `Bridge._haiku_tick` appends exactly one record on a successful compose, and **none** when
-    compose returns `None`.
-11. With `haiku_archive = false`, `_haiku_tick` writes nothing.
+10. The `compose` returned by `_make_compose` appends exactly one record on a successful
+    compose, and **none** when the underlying `haiku.compose` returns `None`.
+11. With `haiku_archive = false`, `_make_compose`'s compose writes nothing.
+12. The existing `Bridge` tests still pass untouched — proof that the archive is genuinely
+    decoupled from the daemon's hot path.
 
 ## Out of scope
 
