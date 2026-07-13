@@ -278,3 +278,35 @@ def test_haikus_cli_limit_zero_means_all_in_both_modes(tmp_path, capsys):
 
     assert archive.main(["--path", str(p), "--stats", "--limit", "0"]) == 0
     assert "3 haikus" in capsys.readouterr().out
+
+
+def test_haikus_cli_stats_defaults_to_the_whole_corpus_not_20(tmp_path, capsys):
+    # --stats must analyse ALL records by default -- trends computed over only
+    # the most-recent-20 default (the plain listing's default) would be noise,
+    # which defeats the point of a trend report. Nothing else pins this: a
+    # refactor that quietly restored the 20-record default here would make the
+    # stats silently meaningless again.
+    p = tmp_path / "h.jsonl"
+    for i in range(25):
+        archive.append([f"haiku {i}"], model="m", prompt="p", path=p)
+
+    assert archive.main(["--stats", "--path", str(p)]) == 0
+    out = capsys.readouterr().out
+    assert "25 haikus" in out          # all 25, not truncated to 20
+
+    # The split cuts both ways: the plain listing still defaults to the most
+    # recent 20, not the whole archive.
+    assert archive.main(["--path", str(p)]) == 0
+    out = capsys.readouterr().out
+    assert "haiku 24" in out and "haiku 5" in out     # newest 20 (5..24)
+    assert "haiku 0" not in out and "haiku 4" not in out  # oldest 5 dropped
+
+
+def test_haikus_cli_rejects_a_negative_limit(tmp_path):
+    # Before the fix, --limit -1 sliced recs[1:] and silently dropped the
+    # OLDEST record with no error. It must now be rejected outright via
+    # argparse rather than returning 0 with a silently truncated list.
+    p = tmp_path / "h.jsonl"
+    archive.append(["a"], model="m", prompt="p", path=p)
+    with pytest.raises(SystemExit):
+        archive.main(["--path", str(p), "--limit", "-1"])
