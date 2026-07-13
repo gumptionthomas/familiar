@@ -1,7 +1,7 @@
 """Single entry point: `familiar run | init | hook <event>`."""
 import sys
 
-from . import archive, daemon, hook, init
+from . import archive, daemon, doctor, hook, init
 
 _HELP = """familiar — a desk buddy for Claude Code, on an M5 or a Tidbyt
 
@@ -10,6 +10,7 @@ usage:
   familiar init [flags]        set up config + Claude Code hooks
   familiar hook <event>        (invoked by Claude Code's hooks)
   familiar haikus [--stats]    browse the archived haikus, or their trends
+  familiar doctor              diagnose why the buddy isn't connecting
 """
 
 
@@ -28,5 +29,7 @@ def main(argv=None) -> int:
         return hook.main(["familiar-hook", *rest])
     if cmd == "haikus":
         return archive.main(rest)
+    if cmd == "doctor":
+        return doctor.main(rest)
     sys.stderr.write(f"unknown command: {cmd}\n{_HELP}")
     return 2

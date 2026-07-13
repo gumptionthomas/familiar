@@ -1,4 +1,5 @@
 from familiar import doctor
+from familiar.config import Config
 
 
 def _facts(**over):
@@ -139,3 +140,71 @@ def test_unknown_facts_never_produce_a_confident_diagnosis():
     ))
     assert _errors(findings) == []                      # no invented cause
     assert any(f.level == "warn" for f in findings)     # but it says so
+
+
+def test_collect_never_raises_when_nothing_is_available(monkeypatch):
+    # No bluetoothctl, no systemd, no journal. collect() must return a facts dict
+    # full of None -- never raise. The daemon's user is already confused; a
+    # traceback from the DIAGNOSTIC tool is the last thing they need.
+    def boom(*a, **k):
+        raise FileNotFoundError("nothing is installed here")
+
+    monkeypatch.setattr(doctor, "_run", boom)
+    cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
+    facts = doctor.collect(cfg)
+
+    assert facts["have_bluetoothctl"] is False
+    assert facts["adapter"]["pairable"] is None
+    assert facts["device"]["paired"] is None
+    assert facts["service"]["active"] is None
+    # ...and diagnose() must survive those facts without inventing a cause.
+    assert [f for f in doctor.diagnose(facts) if f.level == "error"] == []
+
+
+def test_collect_parses_bluetoothctl_and_the_log(monkeypatch):
+    def fake_run(cmd, **kw):
+        if cmd[0] == "bluetoothctl" and cmd[1] == "--version":
+            return "bluetoothctl: 5.66\n"       # collect() probes this first
+        if cmd[0] == "bluetoothctl" and cmd[1] == "show":
+            return "\tPowered: yes\n\tPairable: no\n"
+        if cmd[0] == "bluetoothctl" and cmd[1] == "info":
+            return "\tPaired: yes\n\tBonded: yes\n\tTrusted: no\n\tConnected: no\n"
+        if cmd[0] == "systemctl":
+            return "active\n"
+        if cmd[0] == "journalctl" and "-k" in cmd:
+            return "unexpected SMP command 0x0b from f0:16\n" * 3
+        if cmd[0] == "journalctl":
+            return ("[familiar] disconnected: failed to discover services\n" * 5 +
+                    "[familiar] clearing a possible stale link to AA:BB\n")
+        if cmd[0] == "pgrep":
+            return ""
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(doctor, "_run", fake_run)
+    cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
+    facts = doctor.collect(cfg)
+
+    assert facts["adapter"] == {"powered": True, "pairable": False}
+    assert facts["device"]["paired"] is True
+    assert facts["device"]["connected"] is False
+    assert facts["service"]["active"] is True
+    assert facts["kernel_smp_errors"] == 3
+    assert facts["log"]["discover_failures"] == 5
+    assert facts["log"]["phantom_clears"] == 1
+    assert facts["log"]["connected_recently"] is False
+
+
+def test_main_exits_1_on_an_error_and_prints_the_remedy(monkeypatch, capsys):
+    monkeypatch.setattr(doctor, "collect", lambda cfg: _facts(
+        device={"paired": False, "connected": False},
+        log={"connected_recently": False}))
+    assert doctor.main([]) == 1
+    out = capsys.readouterr().out
+    assert "KeyboardOnly" in out          # the remedy is actually printed
+    assert "pairable on" in out
+
+
+def test_main_exits_0_when_healthy(monkeypatch, capsys):
+    monkeypatch.setattr(doctor, "collect", lambda cfg: _facts())
+    assert doctor.main([]) == 0
+    assert "healthy" in capsys.readouterr().out.lower()

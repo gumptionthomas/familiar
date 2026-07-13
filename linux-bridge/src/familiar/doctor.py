@@ -12,7 +12,11 @@ broken on the one that matters. We diagnose, and we print the exact commands.
 diagnose() is PURE: facts in, findings out, no I/O. That is what makes every
 scenario -- including the 2026-07-13 failure -- testable without hardware.
 """
+import re
+import subprocess
 from dataclasses import dataclass, field
+
+from .config import load as load_config
 
 
 @dataclass
@@ -171,3 +175,128 @@ def diagnose(facts: dict) -> list[Finding]:
         bits.append("connected" if dev.get("connected") else "not connected")
     out.append(Finding("ok", "Everything looks healthy", ", ".join(bits), []))
     return out
+
+
+def _run(cmd, timeout=10) -> str:
+    """Run a command, return stdout. Raises on any failure — callers catch."""
+    return subprocess.run(cmd, capture_output=True, text=True,
+                          timeout=timeout, check=False).stdout
+
+
+def _try(fn, default=None):
+    """Best-effort: any failure means 'couldn't determine', never a crash."""
+    try:
+        return fn()
+    except Exception:
+        return default
+
+
+def _yesno(text, field):
+    for line in (text or "").splitlines():
+        line = line.strip()
+        if line.startswith(field + ":"):
+            v = line.split(":", 1)[1].strip().lower()
+            return True if v == "yes" else (False if v == "no" else None)
+    return None
+
+
+def collect(cfg) -> dict:
+    """Gather the facts. NEVER raises: an undeterminable fact is None."""
+    have_btctl = _try(
+        lambda: bool(_run(["bluetoothctl", "--version"])), False) or False
+
+    adapter = {"powered": None, "pairable": None}
+    if have_btctl:
+        show = _try(lambda: _run(["bluetoothctl", "show"]), "") or ""
+        adapter = {"powered": _yesno(show, "Powered"),
+                   "pairable": _yesno(show, "Pairable")}
+
+    device = {"known": None, "paired": None, "bonded": None,
+              "trusted": None, "connected": None}
+    if have_btctl and cfg.address:
+        info = _try(lambda: _run(["bluetoothctl", "info", cfg.address]), "") or ""
+        known = "Paired:" in info
+        device = {"known": known if info else None,
+                  "paired": _yesno(info, "Paired"),
+                  "bonded": _yesno(info, "Bonded"),
+                  "trusted": _yesno(info, "Trusted"),
+                  "connected": _yesno(info, "Connected")}
+
+    active = _try(
+        lambda: _run(["systemctl", "--user", "is-active",
+                      "familiar.service"]).strip() == "active")
+    installed = _try(
+        lambda: "familiar.service" in _run(
+            ["systemctl", "--user", "list-unit-files", "familiar.service"]))
+    manual = _try(
+        lambda: len([l for l in _run(["pgrep", "-af", "familiar run"]).splitlines()
+                     if l.strip()]))
+
+    kern = _try(lambda: _run(
+        ["journalctl", "-k", "--since", "-10min", "--no-pager"]), "") or ""
+    smp = len(re.findall(r"unexpected SMP command", kern)) if kern else None
+
+    jlog = _try(lambda: _run(
+        ["journalctl", "--user", "-u", "familiar.service",
+         "--since", "-10min", "--no-pager"]), "") or ""
+    log = {"discover_failures": None, "not_found": None,
+           "phantom_clears": None, "connected_recently": None}
+    if jlog:
+        log = {
+            "discover_failures": jlog.count("failed to discover services"),
+            "not_found": jlog.count("was not found"),
+            "phantom_clears": jlog.count("clearing a possible stale link"),
+            "connected_recently": "[familiar] connected " in jlog,
+        }
+
+    mode = ("ble" if cfg.address
+            else "tidbyt" if (cfg.tidbyt_device_id and cfg.tidbyt_api_key)
+            else "none")
+    return {
+        "config": {"parsed": True, "mode": mode, "address": cfg.address,
+                   "haiku": bool(cfg.api_key),
+                   "tidbyt": bool(cfg.tidbyt_device_id and cfg.tidbyt_api_key)},
+        "service": {"installed": installed, "active": active,
+                    "manual_procs": manual},
+        "have_bluetoothctl": have_btctl,
+        "adapter": adapter,
+        "device": device,
+        "kernel_smp_errors": smp,
+        "log": log,
+    }
+
+
+_MARK = {"ok": "OK  ", "warn": "??  ", "error": "!!  "}
+
+
+def render(findings) -> str:
+    lines = []
+    for f in findings:
+        lines.append(f"{_MARK.get(f.level, '    ')}{f.title}")
+        if f.why:
+            lines.append(f"      {f.why}")
+        if f.remedy:
+            lines.append("")
+            lines.extend(f"      {r}" if r else "" for r in f.remedy)
+        lines.append("")
+    return "\n".join(lines)
+
+
+def main(argv=None) -> int:
+    import argparse
+    ap = argparse.ArgumentParser(
+        prog="familiar doctor",
+        description="Diagnose why the buddy isn't working. Read-only: this "
+                    "never starts, stops, or repairs anything.")
+    ap.parse_args(argv)
+
+    cfg = _try(load_config)
+    if cfg is None:
+        print("!!  Could not read the config\n"
+              "      ~/.config/familiar/config.toml is missing or unparseable.\n\n"
+              "      familiar init")
+        return 1
+
+    findings = diagnose(collect(cfg))
+    print(render(findings))
+    return 1 if any(f.level == "error" for f in findings) else 0
