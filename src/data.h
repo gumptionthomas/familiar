@@ -3,6 +3,7 @@
 #include <ArduinoJson.h>
 #include "ble_bridge.h"
 #include "xfer.h"
+#include "feed.h"
 
 struct TamaState {
   uint8_t  sessionsTotal;
@@ -20,6 +21,12 @@ struct TamaState {
   char     promptTool[20];
   char     promptHint[44];
 };
+
+// feed.h writes FEED_MAX_LINES rows into TamaState::lines. The inner dimension
+// is enforced by array-parameter type checking, but the OUTER one decays away --
+// shrinking lines[] would silently overflow into promptId. Pin both here.
+static_assert(sizeof(TamaState::lines) == FEED_MAX_LINES * FEED_LINE_CAP,
+              "feed.h dimensions must match TamaState::lines");
 
 // ---------------------------------------------------------------------------
 // Three modes, checked in priority order:
@@ -99,19 +106,13 @@ static void _applyJson(const char* line, TamaState* out) {
   out->tokensToday = doc["tokens_today"] | out->tokensToday;
   const char* m = doc["msg"];
   if (m) { strncpy(out->msg, m, sizeof(out->msg)-1); out->msg[sizeof(out->msg)-1]=0; }
-  JsonArray la = doc["entries"];
+  JsonArrayConst la = doc["entries"];
   if (!la.isNull()) {
-    uint8_t n = 0;
-    for (JsonVariant v : la) {
-      if (n >= 8) break;
-      const char* s = v.as<const char*>();
-      strncpy(out->lines[n], s ? s : "", 91); out->lines[n][91]=0;
-      n++;
-    }
-    if (n != out->nLines || (n > 0 && strcmp(out->lines[n-1], out->msg) != 0)) {
-      out->lineGen++;
-    }
-    out->nLines = n;
+    // lineGen must bump ONLY on a real change. It used to be inferred by
+    // comparing the newest line against `msg` -- but `msg` is a 23-char status
+    // field, so any longer line mismatched every heartbeat and lineGen ticked
+    // forever, waking the screen every 10s and blocking clock mode entirely.
+    if (feedApplyEntries(out->lines, &out->nLines, la)) out->lineGen++;
   }
   JsonObject pr = doc["prompt"];
   if (!pr.isNull()) {

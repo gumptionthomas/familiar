@@ -642,7 +642,7 @@ void drawInfo() {
     ln("  heap     %uKB", ESP.getFreeHeap() / 1024);
     ln("  bright   %u/4", brightLevel);
     ln("  bt       %s", settings().bt ? (dataBtActive() ? "linked" : "on") : "off");
-    ln("  temp     %dC", (int)M5.Axp.GetTempInAXP192());
+    ln("  cpu      %dC", (int)M5.Axp.GetTempInAXP192());
 
   } else if (infoPage == 4) {
     _infoHeader(p, y, "ENV", infoPage);
