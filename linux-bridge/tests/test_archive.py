@@ -76,12 +76,40 @@ def test_load_skips_a_corrupt_line_and_keeps_the_rest(tmp_path):
     assert all(r["lines"] == ["ok"] for r in recs)
 
 
+def test_load_survives_a_truncation_inside_a_multibyte_character(tmp_path):
+    # append() writes ensure_ascii=False, and the model emits em-dashes and curly
+    # quotes constantly. A power cut mid-write can truncate INSIDE a multi-byte
+    # character, leaving invalid UTF-8. That must cost us the bad line -- not the
+    # entire archive, which is what a naive `except: return []` does.
+    p = tmp_path / "haikus.jsonl"
+    archive.append(["dusk settles — quiet", "the sensor breathes", "night"],
+                   model="m", prompt="p", path=p)
+    archive.append(["a second haiku", "wholly intact", "here"],
+                   model="m", prompt="p", path=p)
+
+    raw = p.read_bytes()
+    # Chop inside the em-dash's 3 UTF-8 bytes of a THIRD, partial record.
+    p.write_bytes(raw + '{"ts":"t","lines":["cut —'.encode("utf-8")[:-1])
+
+    recs = archive.load(p)
+    assert len(recs) == 2                      # both good records survive
+    assert recs[1]["lines"][0] == "a second haiku"
+
+
 def test_load_limit_keeps_the_most_recent(tmp_path):
     p = tmp_path / "haikus.jsonl"
     for i in range(5):
         archive.append([str(i)], model="m", prompt="p", path=p)
     recs = archive.load(p, limit=2)
     assert [r["lines"] for r in recs] == [["3"], ["4"]]   # newest 2, oldest first
+
+
+def test_load_limit_zero_means_no_limit(tmp_path):
+    p = tmp_path / "h.jsonl"
+    for i in range(3):
+        archive.append([str(i)], model="m", prompt="p", path=p)
+    assert archive.load(p, limit=0) == archive.load(p)      # 0 == no limit
+    assert len(archive.load(p, limit=0)) == 3
 
 
 def _rec(lines, prompt="p1"):
@@ -122,6 +150,19 @@ def test_repeated_lines_normalise_case_and_whitespace():
     recs = [_rec(["The Lantern Sways"]), _rec(["  the lantern sways  "])]
     st = archive.stats(recs)
     assert dict(st["repeated"]) == {"the lantern sways": 2}
+
+
+def test_tropes_catch_possessives_and_contractions():
+    # "the cursor's glow" is plausible model output. If the apostrophe keeps
+    # cursor's as one token, the banned word is silently missed -- a false
+    # negative in the metric the design calls most valuable.
+    recs = [_rec(["the cursor's glow", "a screen's hum", "it's dusk"])]
+    st = archive.stats(recs)
+    tropes = dict((w, share) for w, _n, share in st["tropes"])
+    assert tropes["cursor"] == pytest.approx(1.0)
+    assert tropes["screen"] == pytest.approx(1.0)
+    imagery = [w for w, _n, _s in st["imagery"]]
+    assert "it's" not in imagery and "cursor's" not in imagery
 
 
 def test_tropes_flag_banned_imagery_case_insensitively():

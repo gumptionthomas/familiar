@@ -59,16 +59,19 @@ def append(lines, *, model: str, prompt: str,
 def load(path: Path = DEFAULT_PATH, limit: int | None = None) -> list[dict]:
     """Read the archive oldest-first. `limit` keeps the most recent N.
 
-    `limit=0` and `limit=None` both mean "no limit" -- this is intentional.
-    Do not "fix" `recs[-limit:] if limit else recs` below to special-case 0;
-    doing so would silently break the CLI's "0 = all" contract.
+    `limit=0` and `limit=None` both mean "no limit".
 
     A corrupt or truncated line (e.g. a power cut mid-write) is skipped, not
     fatal -- an append-only log a crash can render unreadable is a bad log.
+    Reading with errors="replace" means even a truncation INSIDE a multi-byte
+    UTF-8 character (append() writes ensure_ascii=False, and the model emits
+    em-dashes and curly quotes constantly) only costs the one bad line, not
+    the whole file. Likewise, any other unexpected read error returns
+    whatever was already parsed rather than discarding it.
     """
     recs = []
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8", errors="replace") as f:
             for line in f:
                 line = line.strip()
                 if not line:
@@ -82,7 +85,7 @@ def load(path: Path = DEFAULT_PATH, limit: int | None = None) -> list[dict]:
     except FileNotFoundError:
         return []
     except Exception:
-        return []
+        return recs
     return recs[-limit:] if limit else recs
 
 
@@ -102,7 +105,7 @@ TROPES = [
     "glow", "glowing", "cursor", "cursors", "blink", "blinking",
 ]
 
-_WORD = re.compile(r"[a-z']+")
+_WORD = re.compile(r"[a-z]+")
 
 
 def _words(rec) -> set[str]:
@@ -113,7 +116,12 @@ def _words(rec) -> set[str]:
 
 
 def _doc_freq(records, vocabulary=None):
-    """(word, n_haikus, share) desc -- the share of haikus containing the word."""
+    """(word, n_haikus, share) desc -- the share of haikus containing the word.
+
+    When no explicit vocabulary is given, stopwords and words under 3 letters
+    are dropped -- short fragments left behind by stripped punctuation (e.g.
+    the trailing "s" of a possessive) are noise, not imagery.
+    """
     total = len(records)
     if not total:
         return []
@@ -135,7 +143,7 @@ def _repeated_lines(records):
     for rec in records:
         # dedupe within one haiku: repeating a line inside a poem is a choice,
         # reusing it across poems is staleness.
-        for line in {" ".join((ln or "").lower().split())
+        for line in {" ".join(ln.lower().split())
                      for ln in (rec.get("lines") or []) if ln.strip()}:
             counts[line] += 1
     return sorted(((ln, n) for ln, n in counts.items() if n >= 2),
@@ -165,18 +173,30 @@ def _fmt_share(n: int, share: float) -> str:
     return f"{share * 100:4.0f}%  ({n})"
 
 
+def _nonneg_int(s: str) -> int:
+    v = int(s)
+    if v < 0:
+        raise argparse.ArgumentTypeError(
+            f"--limit must not be negative (0 means \"all\"), got {s}")
+    return v
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="familiar haikus")
     ap.add_argument("--stats", action="store_true",
                     help="show trends instead of the haikus themselves")
-    ap.add_argument("--limit", type=int, default=20,
+    ap.add_argument("--limit", type=_nonneg_int, default=None,
                     help="how many of the most recent haikus to use "
-                         "(default 20; 0 = all)")
+                         "(default 20 for the plain listing, ALL for "
+                         "--stats; 0 = all in either mode)")
     ap.add_argument("--path", default=str(DEFAULT_PATH),
                     help=argparse.SUPPRESS)     # tests only
     args = ap.parse_args(argv)
 
-    limit = None if args.limit == 0 else args.limit
+    if args.limit is None:
+        limit = None if args.stats else 20
+    else:
+        limit = None if args.limit == 0 else args.limit
     records = load(Path(args.path), limit=limit)
     if not records:
         print("no haikus archived yet — the buddy writes one each time it "
