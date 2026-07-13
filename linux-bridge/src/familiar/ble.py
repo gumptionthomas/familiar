@@ -205,8 +205,17 @@ async def _ble_link_loop(cfg, bridge, on_connect, connector=None,
                     # retry forever and hammer the radio.
                     print(f"[familiar] link flapped after {held:.1f}s; "
                           f"backing off {address}")
+                    # Return value intentionally discarded: a flap means
+                    # connect() actually succeeded, so the device is reachable
+                    # and is definitionally not a stale-link phantom. Only the
+                    # except path below uses the streak to trigger a clear.
                     streak.failure()
         except Exception as e:
+            # Note: if BleakClient.__aexit__ raises on teardown (bleak's BlueZ
+            # backend can throw when disconnecting an already-gone device), a
+            # link that held for hours lands here instead of the held-success
+            # branch above -- backoff isn't reset and streak.failure() ticks.
+            # Bounded by the 30s backoff ceiling; noted rather than fixed.
             bridge.transport = NullTransport()  # ensure detached on any failure
             print(f"[familiar] disconnected: {e}")
             # After repeated failures with a known address, a stale BlueZ link

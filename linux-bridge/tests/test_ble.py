@@ -498,6 +498,59 @@ def test_unknown_link_state_still_clears(tmp_path):
     asyncio.run(run())
 
 
+def test_default_link_state_binding_is_used(tmp_path, monkeypatch):
+    # probe_link = link_state or _link_state only resolves to the module-level
+    # _link_state when no link_state= kwarg is passed. Every other test in this
+    # file injects a stub, so that default-binding line has zero coverage
+    # without this test -- a typo in it would ship silently.
+    async def run():
+        store = SessionStore()
+        bridge = Bridge(store, NullTransport(), str(tmp_path / "d.sock"))
+        cleared = []
+        calls = {"n": 0}
+
+        async def recording_link_state(address):
+            calls["n"] += 1
+            return {"powered": None, "pairable": None, "paired": None,
+                    "bonded": None, "trusted": None}
+
+        monkeypatch.setattr(ble, "_link_state", recording_link_state)
+
+        async def fake_disconnect(address):
+            cleared.append(address)
+
+        def connect(address, disconnected_callback=None):
+            raise OSError("device not found")
+
+        cfg = Config(address="AA:BB", owner="", socket_path=str(tmp_path / "d.sock"))
+
+        async def on_connect(transport, owner):
+            pass
+
+        t = _FakeTime()
+        task = asyncio.ensure_future(ble._ble_link_loop(
+            cfg, bridge, on_connect, connector=connect,
+            disconnect=fake_disconnect, phantom_after=1,
+            clock=t.clock, sleep=t.sleep))
+        try:
+            for _ in range(400):
+                await asyncio.sleep(0)
+                if cleared:
+                    break
+            assert calls["n"] >= 1, \
+                "the default probe_link must resolve to the monkeypatched _link_state"
+            assert cleared == ["AA:BB"], \
+                "all-None state must fall back to today's behavior and clear"
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    asyncio.run(run())
+
+
 def test_link_state_parses_bluetoothctl_output(monkeypatch):
     # _link_state scrapes bluetoothctl; verify the parse, not the subprocess.
     async def run():

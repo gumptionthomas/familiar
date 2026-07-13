@@ -37,8 +37,12 @@ Copy these values verbatim. They are module-level in `ble.py`.
   must **never** trigger a phantom-clear. An absent device is not a phantom.
 - `clock`, `sleep`, and `link_state` are injected **only** for testability. Their
   production defaults must preserve current behavior exactly.
-- The 7 existing tests in `linux-bridge/tests/test_ble.py` must keep passing **untouched**.
-  Do not edit them. If one breaks, the change is wrong.
+- The 7 existing tests in `linux-bridge/tests/test_ble.py` must keep passing. Prefer not
+  to edit them; if one breaks, the change is probably wrong. In practice, commit
+  `ee241be` had to inject a `link_state` stub into
+  `test_ble_link_loop_clears_phantom_after_threshold` and
+  `test_phantom_clear_rate_limited`, because adding `link_state` with a real-`bluetoothctl`
+  default made them shell out to a subprocess mid-test. No assertion was changed.
 - Run tests from the `linux-bridge/` directory.
 
 ---

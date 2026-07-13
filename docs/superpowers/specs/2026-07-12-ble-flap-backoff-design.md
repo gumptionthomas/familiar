@@ -161,8 +161,11 @@ never triggers a phantom-clear — an absent device is not a phantom.
 
 ## Testing
 
-Existing tests in `linux-bridge/tests/test_ble.py` (7) must keep passing untouched, which
-also proves the production defaults are behavior-preserving.
+Existing tests in `linux-bridge/tests/test_ble.py` (7) must keep passing, which also
+proves the production defaults are behavior-preserving. In practice, commit `ee241be` had
+to inject a `link_state` stub into `test_ble_link_loop_clears_phantom_after_threshold` and
+`test_phantom_clear_rate_limited` — adding `link_state` with a real-`bluetoothctl` default
+made them shell out to a subprocess mid-test. No assertion in either test changed.
 
 New tests, using an injected fake clock and a sleep-recorder so no real time passes:
 
@@ -176,9 +179,10 @@ New tests, using an injected fake clock and a sleep-recorder so no real time pas
 4. **`test_no_phantom_clear_when_unpaired`** — with `link_state` reporting `paired=False`,
    the loop must issue **zero** `bluetoothctl disconnect` calls, however many failures
    accumulate. This is the 2026-07-12 incident, encoded.
-5. **`test_unpaired_logs_repair_instructions`** — the same condition must emit the
-   passkey/`KeyboardOnly` remedy text, so the next person sees the fix in
-   `journalctl` rather than needing an HCI trace.
+5. The same condition must emit the passkey/`KeyboardOnly` remedy text, so the next
+   person sees the fix in `journalctl` rather than needing an HCI trace. This is not a
+   separate test: it's folded into `test_no_phantom_clear_when_unpaired`'s `capsys`
+   assertions.
 6. **`test_unknown_link_state_still_clears`** — with `link_state` returning `paired=None`
    (e.g. `bluetoothctl` absent), the phantom-clear still fires as it does today. Proves the
    diagnostic is strictly additive and can't regress self-healing.
