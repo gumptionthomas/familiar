@@ -111,11 +111,67 @@ async def _bluetoothctl_disconnect(address) -> None:
                 pass
 
 
+async def _bluetoothctl_output(*args) -> str:
+    # Best-effort `bluetoothctl <args>` capture. Raises on a missing binary or
+    # timeout; callers treat any failure as "state unknown".
+    proc = await asyncio.create_subprocess_exec(
+        "bluetoothctl", *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.DEVNULL)
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+    except Exception:
+        if proc.returncode is None:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        raise
+    return out.decode("utf-8", "replace")
+
+
+def _yesno(text: str, field: str):
+    # Scrape "\tField: yes" out of bluetoothctl output. None = couldn't tell.
+    for line in text.splitlines():
+        line = line.strip()
+        if line.startswith(field + ":"):
+            value = line.split(":", 1)[1].strip().lower()
+            if value == "yes":
+                return True
+            if value == "no":
+                return False
+    return None
+
+
+async def _link_state(address) -> dict:
+    # What BlueZ thinks of the adapter and the device. Every field is True,
+    # False, or None (undetermined). NEVER raises: an undeterminable state must
+    # leave the caller's behavior exactly as it was.
+    state = {"powered": None, "pairable": None, "paired": None,
+             "bonded": None, "trusted": None}
+    try:
+        show = await _bluetoothctl_output("show")
+        state["powered"] = _yesno(show, "Powered")
+        state["pairable"] = _yesno(show, "Pairable")
+    except Exception:
+        pass
+    try:
+        info = await _bluetoothctl_output("info", address)
+        state["paired"] = _yesno(info, "Paired")
+        state["bonded"] = _yesno(info, "Bonded")
+        state["trusted"] = _yesno(info, "Trusted")
+    except Exception:
+        pass
+    return state
+
+
 async def _ble_link_loop(cfg, bridge, on_connect, connector=None,
                          disconnect=None, phantom_after=3,
-                         clock=time.monotonic, sleep=asyncio.sleep) -> None:
+                         clock=time.monotonic, sleep=asyncio.sleep,
+                         link_state=None) -> None:
     connect = connector or BleakClient
     clear_phantom = disconnect or _bluetoothctl_disconnect
+    probe_link = link_state or _link_state
     backoff = 1.0
     max_backoff = 30.0
     streak = _FailStreak(phantom_after)
@@ -160,8 +216,33 @@ async def _ble_link_loop(cfg, bridge, on_connect, connector=None,
             if address and streak.failure() \
                     and clock() - last_clear >= PHANTOM_MIN_INTERVAL:
                 last_clear = clock()
-                print(f"[familiar] clearing a possible stale link to {address}")
-                await clear_phantom(address)
+                st = await probe_link(address)
+                print(f"[familiar] repeated failures — adapter: "
+                      f"powered={st['powered']} pairable={st['pairable']} | "
+                      f"device {address}: paired={st['paired']} "
+                      f"bonded={st['bonded']} trusted={st['trusted']}")
+                if st["paired"] is False:
+                    # NOT a phantom. bluetoothctl disconnect clears a stale LINK;
+                    # it cannot restore stale KEYS. The firmware requires LE
+                    # Secure Connections + MITM (src/ble_bridge.cpp), so pairing
+                    # needs a 6-digit passkey typed by a human -- this daemon
+                    # cannot repair it, and must say so instead of hammering.
+                    print(f"[familiar] the M5 is NOT paired. Re-pair it in a "
+                          f"terminal:\n"
+                          f"    bluetoothctl\n"
+                          f"    agent KeyboardOnly\n"
+                          f"    default-agent\n"
+                          f"    scan on          (wait for {address})\n"
+                          f"    pair {address}   (type the code on the stick)\n"
+                          f"    trust {address}")
+                    print("[familiar] skipping the stale-link clear: an "
+                          "unpaired device is not a phantom.")
+                else:
+                    # Paired (or undeterminable) -> a phantom is plausible, so
+                    # clear it. Falling back to the clear on an unknown state
+                    # keeps this strictly additive.
+                    print(f"[familiar] clearing a possible stale link to {address}")
+                    await clear_phantom(address)
         await sleep(min(backoff, max_backoff))
         backoff = min(backoff * 2, max_backoff)
 

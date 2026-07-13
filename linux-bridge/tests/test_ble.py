@@ -393,3 +393,131 @@ def test_phantom_clear_rate_limited(tmp_path):
             f"clears must be >= {ble.PHANTOM_MIN_INTERVAL}s apart, got gaps {gaps}"
 
     asyncio.run(run())
+
+
+def test_no_phantom_clear_when_unpaired(tmp_path, capsys):
+    # The 2026-07-12 incident: the M5 lost its bond, so every connect failed and
+    # the phantom-clear fired ~280 times against a condition it cannot repair.
+    # bluetoothctl disconnect clears a stale LINK, not stale KEYS.
+    async def run():
+        store = SessionStore()
+        bridge = Bridge(store, NullTransport(), str(tmp_path / "u.sock"))
+        cleared = []
+
+        async def fake_disconnect(address):
+            cleared.append(address)
+
+        async def unpaired_state(address):
+            return {"powered": True, "pairable": False, "paired": False,
+                    "bonded": False, "trusted": False}
+
+        def connect(address, disconnected_callback=None):
+            raise OSError("failed to discover services, device disconnected")
+
+        cfg = Config(address="AA:BB", owner="", socket_path=str(tmp_path / "u.sock"))
+
+        async def on_connect(transport, owner):
+            pass
+
+        t = _FakeTime()
+        task = asyncio.ensure_future(ble._ble_link_loop(
+            cfg, bridge, on_connect, connector=connect,
+            disconnect=fake_disconnect, phantom_after=1,
+            clock=t.clock, sleep=t.sleep, link_state=unpaired_state))
+        try:
+            for _ in range(400):
+                await asyncio.sleep(0)
+                if len(t.sleeps) >= 6:
+                    break
+            assert cleared == [], \
+                "an unpaired device is not a phantom -- must not disconnect"
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    asyncio.run(run())
+    out = capsys.readouterr().out
+    assert "NOT paired" in out                 # says what is wrong
+    assert "KeyboardOnly" in out               # ...and how to fix it
+
+
+def test_unknown_link_state_still_clears(tmp_path):
+    # If bluetoothctl is missing/unparseable, paired is None. The diagnostic is
+    # strictly ADDITIVE: an unknown state must never make us less able to
+    # self-heal than we are today, so the phantom-clear still fires.
+    async def run():
+        store = SessionStore()
+        bridge = Bridge(store, NullTransport(), str(tmp_path / "k.sock"))
+        cleared = []
+
+        async def fake_disconnect(address):
+            cleared.append(address)
+
+        async def unknown_state(address):
+            return {"powered": None, "pairable": None, "paired": None,
+                    "bonded": None, "trusted": None}
+
+        def connect(address, disconnected_callback=None):
+            raise OSError("device not found")
+
+        cfg = Config(address="AA:BB", owner="", socket_path=str(tmp_path / "k.sock"))
+
+        async def on_connect(transport, owner):
+            pass
+
+        t = _FakeTime()
+        task = asyncio.ensure_future(ble._ble_link_loop(
+            cfg, bridge, on_connect, connector=connect,
+            disconnect=fake_disconnect, phantom_after=1,
+            clock=t.clock, sleep=t.sleep, link_state=unknown_state))
+        try:
+            for _ in range(400):
+                await asyncio.sleep(0)
+                if cleared:
+                    break
+            assert cleared == ["AA:BB"], \
+                "unknown pairing state must fall back to today's behavior"
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    asyncio.run(run())
+
+
+def test_link_state_parses_bluetoothctl_output(monkeypatch):
+    # _link_state scrapes bluetoothctl; verify the parse, not the subprocess.
+    async def run():
+        show = "\tPowered: yes\n\tPairable: no\n"
+        info = "\tPaired: no\n\tBonded: no\n\tTrusted: yes\n"
+
+        async def fake_run(*args, **kwargs):
+            return show if "show" in args else info
+
+        monkeypatch.setattr(ble, "_bluetoothctl_output", fake_run)
+        st = await ble._link_state("AA:BB")
+        assert st["powered"] is True
+        assert st["pairable"] is False
+        assert st["paired"] is False
+        assert st["trusted"] is True
+
+    asyncio.run(run())
+
+
+def test_link_state_unknown_when_bluetoothctl_missing(monkeypatch):
+    # No bluetoothctl -> every field None, never an exception.
+    async def run():
+        async def boom(*args, **kwargs):
+            raise FileNotFoundError("bluetoothctl")
+
+        monkeypatch.setattr(ble, "_bluetoothctl_output", boom)
+        st = await ble._link_state("AA:BB")
+        assert st == {"powered": None, "pairable": None, "paired": None,
+                      "bonded": None, "trusted": None}
+
+    asyncio.run(run())
