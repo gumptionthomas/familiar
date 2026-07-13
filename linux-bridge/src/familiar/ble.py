@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from bleak import BleakClient, BleakScanner
 
@@ -9,6 +10,8 @@ NUS_RX = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # write to device
 NUS_TX = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # notify from device
 NAME_PREFIX = "Claude-"
 CHUNK = 180
+HOLD_MIN = 30.0              # a link must survive this long to count as a success
+PHANTOM_MIN_INTERVAL = 300.0  # floor between bluetoothctl disconnect calls
 
 
 class _FailStreak:
@@ -50,19 +53,23 @@ async def _resolve_address(cfg) -> str | None:
 
 
 async def _ble_session(bridge, on_connect, owner, connect, address,
-                       on_connected=None) -> None:
+                       clock=time.monotonic) -> float:
     # One connect -> serve -> disconnect cycle. Attaches a live BleTransport to
     # the already-running bridge for the duration of the link, then restores
     # NullTransport so the bridge's other loops (Tidbyt, haiku, sweep) keep
     # running once the M5 goes away. The bridge itself is never torn down here.
+    #
+    # Returns how long the link was UP (seconds), measured from the moment the
+    # connection is established -- excluding connect latency. The caller uses
+    # this to tell a real session from a flap: a link that dies in 2s must not
+    # be credited as a success, or the reconnect backoff can never engage.
     disconnected = asyncio.Event()
     async with connect(
         address,
         disconnected_callback=lambda _c: disconnected.set(),
     ) as client:
+        up_at = clock()
         print(f"[familiar] connected {address}")
-        if on_connected:
-            on_connected()          # link is up -> reset the reconnect backoff
         # TX notify is encrypted-only; subscribing forces the encrypted link up
         # (and lets the device send acks).
         try:
@@ -79,6 +86,7 @@ async def _ble_session(bridge, on_connect, owner, connect, address,
             await disconnected.wait()
         finally:
             bridge.transport = NullTransport()
+        return clock() - up_at
 
 
 async def _bluetoothctl_disconnect(address) -> None:
@@ -104,21 +112,19 @@ async def _bluetoothctl_disconnect(address) -> None:
 
 
 async def _ble_link_loop(cfg, bridge, on_connect, connector=None,
-                         disconnect=None, phantom_after=3) -> None:
+                         disconnect=None, phantom_after=3,
+                         clock=time.monotonic, sleep=asyncio.sleep) -> None:
     connect = connector or BleakClient
     clear_phantom = disconnect or _bluetoothctl_disconnect
     backoff = 1.0
+    max_backoff = 30.0
     streak = _FailStreak(phantom_after)
-
-    def on_up():
-        nonlocal backoff
-        backoff = 1.0
-        streak.success()
+    last_clear = float("-inf")
 
     while True:
         # Everything BLE-related is inside the try: a scan/connect/link failure
         # must only back off and retry, never escape and cancel the persistent
-        # bridge (which would refreeze the Tidbyt — the bug the decouple undoes).
+        # bridge (which would refreeze the Tidbyt -- the bug #43 undoes).
         address = None
         try:
             address = await _resolve_address(cfg)
@@ -128,21 +134,36 @@ async def _ble_link_loop(cfg, bridge, on_connect, connector=None,
                 print("[familiar] no Claude- device found; is it awake? "
                       "have you paired with bluetoothctl?")
             else:
-                await _ble_session(bridge, on_connect, cfg.owner, connect,
-                                   address, on_connected=on_up)
-                print(f"[familiar] link dropped; reconnecting {address}")
-                await asyncio.sleep(1)         # brief settle, guard against flap
-                continue                       # backoff/streak reset on connect
+                held = await _ble_session(bridge, on_connect, cfg.owner, connect,
+                                          address, clock=clock)
+                if held >= HOLD_MIN:
+                    # A real session. Reconnect promptly.
+                    print(f"[familiar] link dropped after {held:.0f}s; "
+                          f"reconnecting {address}")
+                    backoff = 1.0
+                    streak.success()
+                else:
+                    # A flap -- the signature of a device at the edge of range.
+                    # Treat it as a failure so the backoff below engages; a
+                    # 2-second link credited as a success is what let this loop
+                    # retry forever and hammer the radio.
+                    print(f"[familiar] link flapped after {held:.1f}s; "
+                          f"backing off {address}")
+                    streak.failure()
         except Exception as e:
             bridge.transport = NullTransport()  # ensure detached on any failure
             print(f"[familiar] disconnected: {e}")
             # After repeated failures with a known address, a stale BlueZ link
-            # ("phantom") is the likely cause; clear it and keep retrying.
-            if address and streak.failure():
+            # ("phantom") is the likely cause; clear it and keep retrying. Rate
+            # limited: an out-of-range device produces the same failures, and
+            # clearing on every 3rd one just hammers the radio for nothing.
+            if address and streak.failure() \
+                    and clock() - last_clear >= PHANTOM_MIN_INTERVAL:
+                last_clear = clock()
                 print(f"[familiar] clearing a possible stale link to {address}")
                 await clear_phantom(address)
-        await asyncio.sleep(min(backoff, 30))
-        backoff = min(backoff * 2, 30)
+        await sleep(min(backoff, max_backoff))
+        backoff = min(backoff * 2, max_backoff)
 
 
 async def run_with_ble(cfg, store, on_connect, compose=None, tidbyt=None,

@@ -239,3 +239,157 @@ def test_ble_link_loop_no_clear_without_address(tmp_path, monkeypatch):
                 pass
 
     asyncio.run(run())
+
+
+class _FakeTime:
+    """Deterministic clock; recorded sleeps advance it."""
+    def __init__(self):
+        self.now = 0.0
+        self.sleeps = []
+
+    def clock(self):
+        return self.now
+
+    async def sleep(self, seconds):
+        self.sleeps.append(seconds)
+        self.now += seconds
+        # A real yield to the event loop: no wall-clock delay (asyncio.sleep(0)
+        # is a bare cooperative yield), but without it this coroutine has zero
+        # suspension points and _ble_link_loop's `while True` never returns
+        # control -- hanging the test forever instead of letting the polling
+        # loop below observe progress and cancel the task.
+        await asyncio.sleep(0)
+
+
+def test_flap_does_not_reset_backoff(tmp_path):
+    # A link that connects and dies in 2s is a FLAP, not a success. Backoff must
+    # grow (1, 2, 4, 8...) instead of pinning at 1s forever.
+    async def run():
+        store = SessionStore()
+        bridge = Bridge(store, NullTransport(), str(tmp_path / "s.sock"))
+        t = _FakeTime()
+
+        async def short_session(*a, **k):
+            t.now += 2.0          # link held only 2s
+            return 2.0
+
+        cfg = Config(address="AA:BB", owner="", socket_path=str(tmp_path / "s.sock"))
+
+        async def on_connect(transport, owner):
+            pass
+
+        orig = ble._ble_session
+        ble._ble_session = short_session
+        try:
+            task = asyncio.ensure_future(ble._ble_link_loop(
+                cfg, bridge, on_connect, connector=lambda *a, **k: None,
+                disconnect=lambda a: asyncio.sleep(0),
+                clock=t.clock, sleep=t.sleep))
+            for _ in range(400):
+                await asyncio.sleep(0)
+                if len(t.sleeps) >= 5:
+                    break
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        finally:
+            ble._ble_session = orig
+
+        assert t.sleeps[:5] == [1.0, 2.0, 4.0, 8.0, 16.0], \
+            f"flap must back off exponentially, got {t.sleeps[:5]}"
+
+    asyncio.run(run())
+
+
+def test_held_link_resets_backoff(tmp_path):
+    # A link that held >= HOLD_MIN is a real session: backoff resets to 1s.
+    async def run():
+        store = SessionStore()
+        bridge = Bridge(store, NullTransport(), str(tmp_path / "s2.sock"))
+        t = _FakeTime()
+        calls = {"n": 0}
+
+        async def sessions(*a, **k):
+            calls["n"] += 1
+            # First three are flaps (backoff climbs), the fourth holds.
+            held = 2.0 if calls["n"] <= 3 else 60.0
+            t.now += held
+            return held
+
+        cfg = Config(address="AA:BB", owner="", socket_path=str(tmp_path / "s2.sock"))
+
+        async def on_connect(transport, owner):
+            pass
+
+        orig = ble._ble_session
+        ble._ble_session = sessions
+        try:
+            task = asyncio.ensure_future(ble._ble_link_loop(
+                cfg, bridge, on_connect, connector=lambda *a, **k: None,
+                disconnect=lambda a: asyncio.sleep(0),
+                clock=t.clock, sleep=t.sleep))
+            for _ in range(600):
+                await asyncio.sleep(0)
+                if len(t.sleeps) >= 5:
+                    break
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        finally:
+            ble._ble_session = orig
+
+        # 3 flaps -> 1, 2, 4. Then a 60s hold resets -> 1 again.
+        assert t.sleeps[:4] == [1.0, 2.0, 4.0, 1.0], \
+            f"a held link must reset backoff, got {t.sleeps[:4]}"
+
+    asyncio.run(run())
+
+
+def test_phantom_clear_rate_limited(tmp_path):
+    # With continuous failures the clear must respect PHANTOM_MIN_INTERVAL (300s
+    # of fake clock), NOT fire once per 3 failures. In the 2026-07-12 incident it
+    # fired ~every 90s for seven hours.
+    async def run():
+        store = SessionStore()
+        bridge = Bridge(store, NullTransport(), str(tmp_path / "r.sock"))
+        t = _FakeTime()
+        cleared_at = []
+
+        async def fake_disconnect(address):
+            cleared_at.append(t.now)
+
+        def connect(address, disconnected_callback=None):
+            raise OSError("device not found")
+
+        cfg = Config(address="AA:BB", owner="", socket_path=str(tmp_path / "r.sock"))
+
+        async def on_connect(transport, owner):
+            pass
+
+        task = asyncio.ensure_future(ble._ble_link_loop(
+            cfg, bridge, on_connect, connector=connect,
+            disconnect=fake_disconnect, phantom_after=3,
+            clock=t.clock, sleep=t.sleep))
+        try:
+            # Run well past 300s of fake time so a second clear becomes eligible.
+            for _ in range(3000):
+                await asyncio.sleep(0)
+                if t.now > 900 or len(cleared_at) >= 3:
+                    break
+        finally:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+        assert cleared_at, "expected at least one clear"
+        gaps = [b - a for a, b in zip(cleared_at, cleared_at[1:])]
+        assert all(g >= ble.PHANTOM_MIN_INTERVAL for g in gaps), \
+            f"clears must be >= {ble.PHANTOM_MIN_INTERVAL}s apart, got gaps {gaps}"
+
+    asyncio.run(run())
