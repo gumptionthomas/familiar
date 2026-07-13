@@ -22,6 +22,12 @@ struct TamaState {
   char     promptHint[44];
 };
 
+// feed.h writes FEED_MAX_LINES rows into TamaState::lines. The inner dimension
+// is enforced by array-parameter type checking, but the OUTER one decays away --
+// shrinking lines[] would silently overflow into promptId. Pin both here.
+static_assert(sizeof(TamaState::lines) == FEED_MAX_LINES * FEED_LINE_CAP,
+              "feed.h dimensions must match TamaState::lines");
+
 // ---------------------------------------------------------------------------
 // Three modes, checked in priority order:
 //   demo   → auto-cycle fake scenarios every 8s, ignore live data

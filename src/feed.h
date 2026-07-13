@@ -18,6 +18,10 @@ inline bool feedApplyEntries(char lines[FEED_MAX_LINES][FEED_LINE_CAP],
   uint8_t n = 0;
   bool changed = false;
   for (JsonVariantConst v : la) {
+    // Entries arrive oldest-first (newest last), so this cap drops the NEWEST
+    // entries, not the oldest. Safe only because the bridge caps max_entries
+    // at 6 (< FEED_MAX_LINES=8); if that default ever grows, this must be
+    // changed to drop from the front instead.
     if (n >= FEED_MAX_LINES) break;
     const char* s = v.as<const char*>();
     if (!s) s = "";
