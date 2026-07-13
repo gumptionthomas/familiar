@@ -208,3 +208,64 @@ def test_main_exits_0_when_healthy(monkeypatch, capsys):
     monkeypatch.setattr(doctor, "collect", lambda cfg: _facts())
     assert doctor.main([]) == 0
     assert "healthy" in capsys.readouterr().out.lower()
+
+
+def test_the_service_is_not_mistaken_for_a_manual_instance(monkeypatch):
+    # The systemd unit's ExecStart IS `familiar run`, so a naive
+    # `pgrep -f "familiar run"` matches the SERVICE ITSELF -- and doctor would
+    # then report "two instances are running" to every user, every time.
+    # A diagnostic that always invents a fault is worse than no diagnostic.
+    def fake_run(cmd, **kw):
+        if cmd[0] == "bluetoothctl" and cmd[1] == "--version":
+            return "bluetoothctl: 5.66\n"
+        if cmd[0] == "bluetoothctl":
+            return ""
+        if cmd[0] == "systemctl" and "is-active" in cmd:
+            return "active\n"
+        if cmd[0] == "systemctl" and "MainPID" in " ".join(cmd):
+            return "82408\n"                     # the service's own PID
+        if cmd[0] == "systemctl":
+            return "familiar.service enabled\n"
+        if cmd[0] == "pgrep":
+            return "82408\n"                     # ...which pgrep also matches
+        if cmd[0] == "journalctl":
+            return ""
+        return ""
+
+    monkeypatch.setattr(doctor, "_run", fake_run)
+    cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
+    facts = doctor.collect(cfg)
+
+    assert facts["manual_procs"] == 0, \
+        "the service's own process must not be counted as a manual instance"
+    assert not [f for f in doctor.diagnose(facts)
+                if f.level == "error" and "instance" in f.title.lower()]
+
+
+def test_a_genuine_manual_instance_is_still_detected(monkeypatch):
+    # ...but a REAL second daemon must still be caught: only one BLE connection
+    # to the stick is possible at a time, and two daemons fight over it.
+    def fake_run(cmd, **kw):
+        if cmd[0] == "bluetoothctl" and cmd[1] == "--version":
+            return "bluetoothctl: 5.66\n"
+        if cmd[0] == "bluetoothctl":
+            return ""
+        if cmd[0] == "systemctl" and "is-active" in cmd:
+            return "active\n"
+        if cmd[0] == "systemctl" and "MainPID" in " ".join(cmd):
+            return "82408\n"
+        if cmd[0] == "systemctl":
+            return "familiar.service enabled\n"
+        if cmd[0] == "pgrep":
+            return "82408\n99999\n"              # the service AND a real manual one
+        if cmd[0] == "journalctl":
+            return ""
+        return ""
+
+    monkeypatch.setattr(doctor, "_run", fake_run)
+    cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
+    facts = doctor.collect(cfg)
+
+    assert facts["manual_procs"] == 1
+    assert [f for f in doctor.diagnose(facts)
+            if f.level == "error" and "instance" in f.title.lower()]

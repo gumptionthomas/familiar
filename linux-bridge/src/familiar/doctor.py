@@ -12,6 +12,7 @@ broken on the one that matters. We diagnose, and we print the exact commands.
 diagnose() is PURE: facts in, findings out, no I/O. That is what makes every
 scenario -- including the 2026-07-13 failure -- testable without hardware.
 """
+import os
 import re
 import subprocess
 from dataclasses import dataclass, field
@@ -191,6 +192,34 @@ def _try(fn, default=None):
         return default
 
 
+def _service_main_pid():
+    """The systemd unit's own MainPID, or None if inactive/unknown.
+
+    `systemctl show -p MainPID --value` prints "0" (or nothing) when the
+    unit is not running, and the numeric PID otherwise.
+    """
+    out = _run(["systemctl", "--user", "show", "familiar.service",
+                "-p", "MainPID", "--value"]).strip()
+    pid = int(out) if out.isdigit() else 0
+    return pid or None
+
+
+def _manual_daemon_count(service_main_pid) -> int:
+    """Count `familiar run` processes that are NOT the service itself.
+
+    The systemd unit's ExecStart IS `familiar run`, so pgrep matches the
+    service's own process too. Exclude it (by PID, not name -- a name match
+    can't tell service and manual apart), and exclude this process and its
+    parent so `familiar doctor` never counts itself.
+    """
+    pids = [l.strip() for l in _run(["pgrep", "-f", "familiar run"]).splitlines()
+            if l.strip()]
+    exclude = {str(os.getpid()), str(os.getppid())}
+    if service_main_pid:
+        exclude.add(str(service_main_pid))
+    return len([p for p in pids if p not in exclude])
+
+
 def _yesno(text, field):
     for line in (text or "").splitlines():
         line = line.strip()
@@ -228,9 +257,13 @@ def collect(cfg) -> dict:
     installed = _try(
         lambda: "familiar.service" in _run(
             ["systemctl", "--user", "list-unit-files", "familiar.service"]))
-    manual = _try(
-        lambda: len([l for l in _run(["pgrep", "-af", "familiar run"]).splitlines()
-                     if l.strip()]))
+
+    # The systemd unit's own ExecStart IS `familiar run`, so a naive
+    # `pgrep -f "familiar run"` also matches the service's own process. Find
+    # that PID so we can exclude it -- otherwise doctor reports "Two
+    # instances are running" to every user, every time the service is up.
+    service_main_pid = _try(_service_main_pid)
+    manual = _try(lambda: _manual_daemon_count(service_main_pid))
 
     kern = _try(lambda: _run(
         ["journalctl", "-k", "--since", "-10min", "--no-pager"]), "") or ""
@@ -258,6 +291,7 @@ def collect(cfg) -> dict:
                    "tidbyt": bool(cfg.tidbyt_device_id and cfg.tidbyt_api_key)},
         "service": {"installed": installed, "active": active,
                     "manual_procs": manual},
+        "manual_procs": manual,
         "have_bluetoothctl": have_btctl,
         "adapter": adapter,
         "device": device,
