@@ -535,6 +535,50 @@ def test_a_dead_stick_is_not_called_a_phantom_link():
     assert not any("phantom" in f.title.lower() for f in findings)
 
 
+def test_an_unknown_journal_yields_no_error_findings():
+    # The sweep suppresses the HEALTH CLAIM on an unknown fact -- but it must not
+    # be the only thing standing between us and a false ERROR. An unreadable
+    # journal must not produce a phantom-link or bond diagnosis: telling someone
+    # to hand-pair with a passkey because we could not read a log file is round
+    # one's cry-wolf all over again.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        log={"discover_failures": None, "not_found": None,
+             "phantom_clears": None, "connected_recently": None},
+    ))
+    assert [f for f in findings if f.level == "error"] == []
+    assert not any(f.level == "ok" for f in findings)      # but no health claim either
+
+
+def test_an_uncountable_manual_process_never_reads_as_healthy():
+    # collect() sets manual_procs=None when pgrep fails/times out. The old code
+    # did `(svc.get("manual_procs") or 0) > 0` -> None became "no second
+    # instance" -> "Everything looks healthy" while two daemons fought over the
+    # one BLE connection. This is the fact the hand-maintained allowlist forgot.
+    findings = doctor.diagnose(_facts(service={"active": True,
+                                               "manual_procs": None,
+                                               "manual_pids": None}))
+    assert not any(f.level == "ok" for f in findings)
+    assert any(f.level == "warn" and f.blocks_health for f in findings)
+
+
+def test_a_powered_off_adapter_is_reported():
+    # Deleting this branch passed the whole suite.
+    findings = doctor.diagnose(_facts(adapter={"powered": False},
+                                      device={"connected": False},
+                                      log={"connected_recently": False}))
+    errs = [f for f in findings if f.level == "error"]
+    assert errs and any("power on" in line for f in errs for line in f.remedy)
+
+
+def test_only_one_warning_when_bluetoothctl_is_missing():
+    # One cause, one warning. Four warnings for one missing binary is noise.
+    findings = doctor.diagnose(_facts(have_bluetoothctl=False))
+    warns = [f for f in findings if f.level == "warn"]
+    assert len(warns) == 1
+    assert not any(f.level == "ok" for f in findings)
+
+
 def test_unreachable_findings_blocks_health_flag_is_pinned():
     # The reviewer flipped the "stick not reachable" finding's blocks_health
     # from True to False and nothing caught it -- the separate "never claim

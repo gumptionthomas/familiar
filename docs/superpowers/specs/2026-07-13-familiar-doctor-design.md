@@ -99,32 +99,79 @@ X"* honestly rather than guessing. Guessing is what cost us the day.
 
 ### The structural rule: an unknown fact is never read as "fine"
 
-Three review rounds found four Critical defects in `diagnose()`, and every one was the
-**same bug wearing a different hat**: a `None` fact — "we could not determine this" — silently
-treated as "clean" or "fine" at some call site the author forgot to guard. The worst instance:
-`log.get("not_found") or 0` turned "we could not read the journal" into "the journal was
-clean", so a `journalctl` timeout on a cold journal (a 5-second subprocess timeout on a large
-journal is a normal, not exotic, event) during the real 2026-07-13-class failure printed
-**"Everything looks healthy"**.
+Five Critical defects across four review rounds were all the **same bug wearing a different
+hat**: a `None` fact — "we could not determine this" — silently treated as "clean" or "fine" at
+some call site the author forgot to guard. The worst instance: `log.get("not_found") or 0`
+turned "we could not read the journal" into "the journal was clean", so a `journalctl` timeout
+on a cold journal (a 5-second subprocess timeout on a large journal is a normal, not exotic,
+event) during the real 2026-07-13-class failure printed **"Everything looks healthy"**.
 
 Re-implementing the "unknown must not be fine" rule by hand at every branch does not work — it
-was tried three times and a site kept getting missed. **The rule is now enforced structurally,
-not by vigilance:**
+was tried three times and a site kept getting missed. The next attempt replaced per-branch
+vigilance with a hand-maintained allowlist (`_UNKNOWN_LABELS` + a `checks` list, swept once
+before any trigger logic) — and that failed too, for the same underlying reason: the allowlist
+was still something a human had to remember to keep in sync with what `diagnose()` actually
+reads. It forgot `service.manual_procs`, a fact `collect()` explicitly sets to `None` on a
+`pgrep` failure/timeout — so `(svc.get("manual_procs") or 0) > 0` turned "we could not count the
+manual processes" into "zero manual processes", and `doctor` printed **"Everything looks
+healthy"** while two daemons fought over the one BLE connection. The vigilance had simply moved
+from the trigger sites to the label map — instances closed, class still open.
 
-- `_unknown_sweep(facts)` runs once, before any trigger logic, and walks every fact that is
-  *relevant to the current mode* (BLE facts do not apply in `tidbyt` mode, and are not swept
-  there — sweeping an irrelevant fact would be a new false positive, not caution). For every
-  such fact that is `None`, it emits exactly one `warn(blocks_health=True)` finding, deduplicated
-  by label so an unreadable journal (which blanks both `discover_failures` and `not_found`)
-  produces ONE warning, not two.
+**The rule is now derived from usage, not from memory.** `diagnose()` reads every fact through a
+small accessor, `_Facts`:
+
+```python
+class _Facts:
+    def __init__(self, facts):
+        self._f = facts or {}
+        self.unknown = []                    # labels of required facts we could not determine
+
+    def need(self, section, key, label):
+        """Read a REQUIRED fact. An unknown one auto-registers and suppresses health."""
+        val = (self._f.get(section) or {}).get(key)
+        if val is None and label not in self.unknown:
+            self.unknown.append(label)
+        return val
+
+    def opt(self, section, key):
+        """Read an OPTIONAL fact (corroboration only). Unknown is fine here."""
+        return (self._f.get(section) or {}).get(key)
+
+    def top(self, key, default=None):        # top-level, optional
+        return self._f.get(key, default)
+```
+
+**Reading a fact through `.need()` IS declaring it required.** There is no separate list to
+keep in sync, because the list no longer exists as a distinct artifact — it is exactly the set
+of `.need()` calls `diagnose()` happens to make. Forgetting a fact is now impossible in the way
+that mattered: forgetting would mean not reading the fact at all, and a fact `diagnose()` never
+reads cannot influence any diagnosis in the first place, so there is nothing to forget to guard.
+Conversely, a fact it *does* read to decide something cannot be read without also being
+registered — the two actions are the same line of code.
+
+- Every fact `diagnose()` uses to decide something is read via `.need(section, key, label)`. No
+  bare `facts["x"]["y"]`, no `.get(...) or 0` anywhere in `diagnose()`.
+- `.opt()` is used only where a fact is genuinely optional — corroboration
+  (`kernel_smp_errors`, via `.top()` since it's a top-level scalar) or a remedy-text refinement
+  that never gates whether a diagnosis fires (`service.installed` and `service.manual_pids`
+  only choose *which* valid remedy line to print, after the firing decision was already made
+  from `service.active` / `service.manual_procs`).
+- **Mode-relevance is structural, not swept:** in `tidbyt` mode the BLE/device/adapter facts are
+  simply never read — the whole BLE branch, and every `.need()` call inside it, is skipped — so
+  they can never register as unknown. Sweeping an irrelevant fact would be a brand-new false
+  positive on a healthy Tidbyt-only setup, not caution.
+- **Dedupe by cause:** if `bluetoothctl` itself is missing, none of the downstream BLE facts are
+  read at all (there is nothing to call `.need()` on), so one missing binary produces exactly
+  one warning, not four.
 - Downstream trigger logic (`failing`, `bond_fires`, `phantom_fires`, …) is free to treat an
   unknown windowed count as "does not meet this threshold" for the purpose of deciding whether a
   *specific* diagnosis fires (via the `_meets(x, n)` helper, which returns `False` for `None`
-  rather than crashing or coercing to `0`) — this is safe only *because* the sweep has
-  independently already guaranteed `blocks_health` is set for that same `None`. The two
-  mechanisms are deliberately decoupled: one decides whether a specific cause fires, the other
-  decides whether the tool is allowed to claim things are fine. Neither can be quietly deleted
-  without the other still catching the case — the sweep is the backstop.
+  rather than crashing or coercing to `0`) — this is safe only *because* `.need()` has already
+  independently guaranteed the same `None` is in `F.unknown`. The two mechanisms are
+  deliberately decoupled: one decides whether a specific cause fires, the other decides whether
+  the tool is allowed to claim things are fine.
+- At the end of `_diagnose()`, every label in `F.unknown` becomes a `warn(blocks_health=True)`
+  finding — automatically, in one loop, with no per-fact code to write or forget.
 - `diagnose()` itself is a thin wrapper around a pure `_diagnose()`: if `_diagnose()` returns an
   empty list — every trigger stayed silent AND the tool was not allowed to claim health either —
   the wrapper appends an explicit "no specific fault found, but this is not healthy" finding.
@@ -132,11 +179,21 @@ not by vigilance:**
   stick with a sub-threshold failure count (`not_found=1`, below `LINK_FAILING_MIN`): zero
   findings, a blank line, exit 0. A blank report is the worst possible output of a diagnostic.
 
-`kernel_smp_errors` is deliberately **not** part of the sweep: it is corroborating evidence, not
-a required fact — the log-volume trigger (`BOND_FAILURES_ALONE`) already covers an unreadable
-kernel log without needing its own warning, and treating its absence as "no corroboration"
-(rather than "unhealthy") does not create false confidence, since it is never used on its own to
-justify a health claim.
+`kernel_smp_errors` is deliberately read via `.top()` rather than `.need()`: it is corroborating
+evidence, not a required fact — the log-volume trigger (`BOND_FAILURES_ALONE`) already covers an
+unreadable kernel log without needing its own warning, and treating its absence as "no
+corroboration" (rather than "unhealthy") does not create false confidence, since it is never
+used on its own to justify a health claim.
+
+One more defect surfaced by the same review round: `_meets`'s `None` branch was unpinned by the
+test suite. Inverting it to `return x is None or x >= n` passed all 237 tests that existed at
+the time — a healthy machine with a `journalctl` timeout would then get `[error] Phantom link`
+and `[error] The M5 is not paired`, telling the user to hand-pair with a passkey on the strength
+of a log file that could not be read. `blocks_health` correctly suppresses the *health claim* in
+that scenario, but nothing was pinning the absence of a false *error* — every existing
+unknown-fact test asserted only "no `ok` finding", which the sweep/accessor guarantees on its
+own regardless of `_meets`'s correctness. `test_an_unknown_journal_yields_no_error_findings`
+closes that gap by asserting the error list is empty, not merely that the summary is withheld.
 
 ### The window-vs-instant model (read this before the trigger list)
 

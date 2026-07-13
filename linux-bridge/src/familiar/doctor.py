@@ -63,75 +63,52 @@ def _meets(x, n):
     An unknown (`None`) count never satisfies a threshold -- but that is not
     the same as treating it as 0/clean. `None` here just means this local
     trigger cannot fire from this signal; the structural guarantee that we
-    never call the result "healthy" comes from `_unknown_sweep` below, which
-    independently emits a `blocks_health` warning for the very same `None`.
-    The two mechanisms are deliberately separate: this one decides whether a
-    SPECIFIC diagnosis fires, that one decides whether we're allowed to claim
-    things are fine.
+    never call the result "healthy" comes from `_Facts.need()` below, which
+    independently records a `blocks_health` warning the moment the very same
+    `None` is read. The two mechanisms are deliberately separate: this one
+    decides whether a SPECIFIC diagnosis fires, that one decides whether
+    we're allowed to claim things are fine.
     """
     return x is not None and x >= n
 
 
-# Every fact we could not determine emits a warning that suppresses the
-# health claim. This is a SWEEP, not a per-branch check, because three review
-# rounds found four Criticals that were all the same bug: a `None` fact
-# silently read as "fine" at some site the author forgot to guard. `None`
-# means "couldn't check", never "fine" -- structure enforces that here, not
-# vigilance at each call site.
-#
-# kernel_smp_errors is deliberately NOT here: it is corroboration, not a
-# required fact -- the log-volume trigger (BOND_FAILURES_ALONE) covers an
-# unreadable kernel log without needing its own warning.
-_UNKNOWN_LABELS = {
-    ("service", "active"):        "whether the service is running",
-    ("adapter", "pairable"):      "whether the adapter is pairable",
-    ("device", "connected"):      "whether the stick is connected",
-    ("device", "paired"):         "whether the stick is paired",
-    ("log", "discover_failures"): "the daemon's recent log",
-    ("log", "not_found"):         "the daemon's recent log",
-}
+class _Facts:
+    """Fact reader that records what it could not determine.
 
+    Five Criticals across four review rounds were all the same bug: a `None`
+    silently read as "fine" at a site the author forgot. The previous attempt
+    replaced per-branch vigilance with a hand-maintained allowlist
+    (`_UNKNOWN_LABELS` + a `checks` list, since removed) -- which just moved
+    the forgetting one layer up: it, too, missed a key (`service.manual_procs`,
+    which `collect()` explicitly sets to `None` on a `pgrep` failure/timeout;
+    the allowlist let that `None` become "no second instance" -> "Everything
+    looks healthy" while two daemons fought over the one BLE connection).
 
-def _unknown_sweep(facts: dict) -> list["Finding"]:
-    """One `warn(blocks_health=True)` per fact we could not determine, for
-    only the facts relevant to the CURRENT mode.
-
-    In `tidbyt` mode the BLE/device/adapter facts are IRRELEVANT, not
-    unknown -- warning about them would be a brand-new false positive, so
-    they are simply not swept in that mode. Labels are de-duplicated so an
-    unreadable journal (which blanks both `discover_failures` and
-    `not_found`) produces ONE warning, not two.
+    So: reading a fact through `.need()` IS declaring it required. If it is
+    unknown, that is recorded automatically and the health claim is
+    suppressed. You cannot forget a fact you did not read, and you cannot
+    read one without registering it.
     """
-    cfg = facts.get("config") or {}
-    svc = facts.get("service") or {}
-    adapter = facts.get("adapter") or {}
-    dev = facts.get("device") or {}
-    log = facts.get("log") or {}
 
-    checks = [("service", "active", svc.get("active"))]
-    if cfg.get("mode") == "ble" and cfg.get("address"):
-        checks += [
-            ("adapter", "pairable", adapter.get("pairable")),
-            ("device", "connected", dev.get("connected")),
-            ("device", "paired", dev.get("paired")),
-            ("log", "discover_failures", log.get("discover_failures")),
-            ("log", "not_found", log.get("not_found")),
-        ]
+    def __init__(self, facts):
+        self._f = facts or {}
+        self.unknown = []                # labels of required facts we could not determine
 
-    out, seen = [], set()
-    for section, key, value in checks:
-        if value is not None:
-            continue
-        label = _UNKNOWN_LABELS[(section, key)]
-        if label in seen:
-            continue
-        seen.add(label)
-        out.append(Finding(
-            "warn", f"Could not determine {label}",
-            "This could not be checked, so it cannot be read as fine -- an "
-            "unknown fact is never evidence of health.", [],
-            blocks_health=True))
-    return out
+    def need(self, section, key, label):
+        """Read a REQUIRED fact. An unknown one auto-registers and suppresses health."""
+        val = (self._f.get(section) or {}).get(key)
+        if val is None and label not in self.unknown:
+            self.unknown.append(label)
+        return val
+
+    def opt(self, section, key):
+        """Read an OPTIONAL fact (corroboration, or remedy-text refinement
+        only -- never gates whether a diagnosis fires). Unknown is fine here.
+        """
+        return (self._f.get(section) or {}).get(key)
+
+    def top(self, key, default=None):        # top-level, optional
+        return self._f.get(key, default)
 
 
 _REPAIR = [
@@ -186,11 +163,11 @@ def diagnose(facts: dict) -> list[Finding]:
 
 def _diagnose(facts: dict) -> list[Finding]:
     out = []
-    cfg = facts.get("config") or {}
-    svc = facts.get("service") or {}
-    adapter = facts.get("adapter") or {}
-    dev = facts.get("device") or {}
-    log = facts.get("log") or {}
+    F = _Facts(facts)
+    # `config` is never unknown -- `main()` already refused to call `diagnose`
+    # at all if the config file itself could not be parsed (see `main`
+    # below), so every field here is a determined value, not a gap to sweep.
+    cfg = F.top("config") or {}
     addr = cfg.get("address")
 
     # --- nothing configured -------------------------------------------------
@@ -201,62 +178,89 @@ def _diagnose(facts: dict) -> list[Finding]:
             ["familiar init"]))
         return out
 
-    # --- the sweep: an unknown fact is never read as "fine" -----------------
-    # Must run before any trigger below, and before the health gate at the
-    # bottom -- it is what makes that gate trustworthy instead of another
-    # site someone has to remember to guard.
-    out.extend(_unknown_sweep(facts))
-
     # --- service ------------------------------------------------------------
-    if svc.get("active") is False:
+    active = F.need("service", "active", "whether the service is running")
+    if active is False:
+        # `installed` only chooses WHICH remedy line to print -- the decision
+        # to fire this finding was already made from `active` above, so an
+        # unknown `installed` is not itself a gap worth its own warning.
         out.append(Finding(
             "error", "The service is not running",
             "familiar.service is installed but not active, so nothing is "
             "feeding the buddy.",
             ["systemctl --user start familiar"]
-            if svc.get("installed") else ["familiar init --service"]))
-    # svc.get("active") is None is handled by the sweep above, not here.
+            if F.opt("service", "installed") else ["familiar init --service"]))
+    # active is None: F.need() already registered it above -- no bare guard needed here.
 
-    if svc.get("active") and (svc.get("manual_procs") or 0) > 0:
-        pids = svc.get("manual_pids") or []
-        if pids:
-            kill_lines = [f"kill {pid}" for pid in pids]
-        else:
-            # We know a manual instance exists but couldn't pin its PID down
-            # (e.g. pgrep failed after the count was taken) -- fall back to
-            # the manual recipe rather than guessing a PID.
-            kill_lines = ["pgrep -af 'familiar run'   # exclude the service's "
-                          "own PID (systemctl --user show familiar.service "
-                          "-p MainPID)",
-                          "kill <PID>"]
-        out.append(Finding(
-            "error", "Two instances are running",
-            "A manual `familiar run` is up alongside the service. Only ONE BLE "
-            "connection to the stick is possible at a time, so the two fight and "
-            "the symptoms look random.",
-            ["# kill the manual instance(s) below -- NEVER the service's own "
-             "PID, and never kill-by-name-match (it would also match the "
-             "shell running this very command):"] + kill_lines))
+    if active:
+        manual_procs = F.need(
+            "service", "manual_procs",
+            "whether a second manual instance is running")
+        # `collect()` sets manual_procs=None on a `pgrep` failure/timeout.
+        # `_meets` treats that as "does not meet the threshold" (never as 0),
+        # so it can never fabricate this finding -- the `.need()` call above
+        # has already registered the gap, which is what stops an uncountable
+        # manual process from silently reading as "no second instance".
+        if _meets(manual_procs, 1):
+            # `manual_pids` only chooses which remedy text to print (named
+            # PIDs vs. the manual pgrep recipe); the fire decision was
+            # already made from `manual_procs` above.
+            pids = F.opt("service", "manual_pids")
+            if pids:
+                kill_lines = [f"kill {pid}" for pid in pids]
+            else:
+                # We know a manual instance exists but couldn't pin its PID down
+                # (e.g. pgrep failed after the count was taken) -- fall back to
+                # the manual recipe rather than guessing a PID.
+                kill_lines = ["pgrep -af 'familiar run'   # exclude the service's "
+                              "own PID (systemctl --user show familiar.service "
+                              "-p MainPID)",
+                              "kill <PID>"]
+            out.append(Finding(
+                "error", "Two instances are running",
+                "A manual `familiar run` is up alongside the service. Only ONE BLE "
+                "connection to the stick is possible at a time, so the two fight and "
+                "the symptoms look random.",
+                ["# kill the manual instance(s) below -- NEVER the service's own "
+                 "PID, and never kill-by-name-match (it would also match the "
+                 "shell running this very command):"] + kill_lines))
 
     # --- BLE (only when an M5 is actually configured) ------------------------
+    # In `tidbyt`/`none` mode these facts are IRRELEVANT, not unknown -- so
+    # this whole block, and every `F.need()` call inside it, is skipped. That
+    # is what keeps a healthy Tidbyt-only setup from acquiring brand-new
+    # false-positive warnings about facts that do not apply to it.
+    connected = None
     if cfg.get("mode") == "ble" and addr:
-        if not facts.get("have_bluetoothctl"):
+        have_btctl = F.top("have_bluetoothctl", False)
+        if not have_btctl:
+            # Dedupe by cause: bluetoothctl itself is missing, so none of the
+            # facts below can be read at all -- do not `.need()` any of them,
+            # or a single missing binary would produce four warnings instead
+            # of the one that actually explains it.
             out.append(Finding(
                 "warn", "Could not check Bluetooth",
                 "bluetoothctl is not installed, so the pairing and adapter "
                 "checks were skipped.", [], blocks_health=True))
         else:
-            connected = dev.get("connected")
+            connected = F.need(
+                "device", "connected", "whether the stick is connected")
+            paired = F.need("device", "paired", "whether the stick is paired")
             # NEVER coerce an unknown windowed count into a number: `None`
             # means "could not read the journal", not "it was clean". These
             # stay `None`-able all the way through; `_meets` treats an
             # unknown count as not meeting any threshold (so it cannot
-            # fabricate a trigger), while `_unknown_sweep` above has ALREADY
-            # emitted a `blocks_health` warning for the same `None` -- so a
-            # `None` window can never silently read as a healthy one.
-            not_found = log.get("not_found")
-            discover_fails = log.get("discover_failures")
-            smp = facts.get("kernel_smp_errors")
+            # fabricate a trigger), while `F.need()` above has ALREADY
+            # registered the same `None` as a required-but-unknown fact -- so
+            # a `None` window can never silently read as a healthy one.
+            not_found = F.need("log", "not_found", "the daemon's recent log")
+            discover_fails = F.need(
+                "log", "discover_failures", "the daemon's recent log")
+            # The ONE genuinely optional fact: corroboration only. An
+            # unreadable kernel log is already covered by the log-volume
+            # trigger (BOND_FAILURES_ALONE), so its absence does not need its
+            # own warning -- it is never used on its own to justify health.
+            smp = F.top("kernel_smp_errors")
 
             # The WINDOW decides whether the link is working. The
             # instantaneous `connected` sample must never veto it: during the
@@ -269,7 +273,7 @@ def _diagnose(facts: dict) -> list[Finding]:
             # Grade the one-sided-bond evidence by confidence. NONE of these
             # branches consult `connected` -- that is the fix.
             bond_fires = (
-                dev.get("paired") is False                        # definitive
+                paired is False                                    # definitive
                 or (failing and _meets(discover_fails, BOND_MIN_FAILURES)
                     and _meets(smp, 1))                            # fingerprint
                 or (failing and _meets(discover_fails, BOND_FAILURES_ALONE)))
@@ -305,12 +309,16 @@ def _diagnose(facts: dict) -> list[Finding]:
             # is the GNOME DEFAULT and only blocks pairing a NEW device --
             # an existing bond connects fine, so it is only an error when a
             # re-pair is actually being advised.
-            if adapter.get("powered") is False:
+            powered = F.need(
+                "adapter", "powered", "whether the Bluetooth adapter is powered on")
+            pairable = F.need(
+                "adapter", "pairable", "whether the adapter is pairable")
+            if powered is False:
                 out.append(Finding(
                     "error", "The Bluetooth adapter is powered off",
                     "Nothing can connect until it is on.",
                     ["bluetoothctl power on"]))
-            if adapter.get("pairable") is False:
+            if pairable is False:
                 if bond_fires:
                     out.append(Finding(
                         "error", "The adapter is not pairable",
@@ -371,7 +379,20 @@ def _diagnose(facts: dict) -> list[Finding]:
                     "if it persists.", [], blocks_health=True))
 
             # connected is None (bluetoothctl didn't answer for this device)
-            # is handled by the sweep above, not here.
+            # was registered by F.need() above, not handled here.
+
+    # Every fact read through F.need() above that turned out to be unknown is
+    # now, automatically, a blocks_health warning -- not because someone
+    # remembered to list it, but because reading it through .need() already
+    # declared it required. This is what makes the class of bug closed: a
+    # fact this function never reads cannot appear here, and a fact it DOES
+    # read cannot be forgotten, because reading it is what registers it.
+    for label in F.unknown:
+        out.append(Finding(
+            "warn", f"Could not determine {label}",
+            "This could not be checked, so it cannot be read as fine -- an "
+            "unknown fact is never evidence of health.", [],
+            blocks_health=True))
 
     # Only claim health if we actually managed to CHECK. A warn about a KNOWN
     # state (e.g. pairable=no) is informative, not a gap -- it must not
@@ -384,8 +405,11 @@ def _diagnose(facts: dict) -> list[Finding]:
 
     # Belt and suspenders: even with no error and no blocks_health finding
     # above, a BLE buddy that is sampled disconnected right now is not
-    # "healthy" -- never print the ok summary next to "not connected".
-    if cfg.get("mode") == "ble" and dev.get("connected") is False:
+    # "healthy" -- never print the ok summary next to "not connected". (If
+    # `connected` were unknown here, F.unknown would already have forced the
+    # `blocks_health` return above, so reaching this line in `ble` mode means
+    # it is KNOWN -- True or False.)
+    if cfg.get("mode") == "ble" and connected is False:
         return out
 
     bits = [f"mode={cfg.get('mode')}"]
@@ -394,7 +418,7 @@ def _diagnose(facts: dict) -> list[Finding]:
     if cfg.get("tidbyt"):
         bits.append("tidbyt on")
     if cfg.get("mode") == "ble":
-        bits.append("connected" if dev.get("connected") else "not connected")
+        bits.append("connected" if connected else "not connected")
     out.append(Finding("ok", "Everything looks healthy", ", ".join(bits), []))
     return out
 
