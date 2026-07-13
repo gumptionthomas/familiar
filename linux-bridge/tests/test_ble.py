@@ -173,6 +173,10 @@ def test_ble_link_loop_clears_phantom_after_threshold(tmp_path):
         async def fake_disconnect(address):
             cleared.append(address)
 
+        async def unknown_state(address):
+            return {"powered": None, "pairable": None, "paired": None,
+                    "bonded": None, "trusted": None}
+
         def connect(address, disconnected_callback=None):
             raise OSError("device not found")
 
@@ -183,7 +187,7 @@ def test_ble_link_loop_clears_phantom_after_threshold(tmp_path):
 
         task = asyncio.ensure_future(ble._ble_link_loop(
             cfg, bridge, on_connect, connector=connect,
-            disconnect=fake_disconnect, phantom_after=1))
+            disconnect=fake_disconnect, phantom_after=1, link_state=unknown_state))
         try:
             for _ in range(200):
                 await asyncio.sleep(0)
@@ -362,6 +366,10 @@ def test_phantom_clear_rate_limited(tmp_path):
         async def fake_disconnect(address):
             cleared_at.append(t.now)
 
+        async def unknown_state(address):
+            return {"powered": None, "pairable": None, "paired": None,
+                    "bonded": None, "trusted": None}
+
         def connect(address, disconnected_callback=None):
             raise OSError("device not found")
 
@@ -373,7 +381,7 @@ def test_phantom_clear_rate_limited(tmp_path):
         task = asyncio.ensure_future(ble._ble_link_loop(
             cfg, bridge, on_connect, connector=connect,
             disconnect=fake_disconnect, phantom_after=3,
-            clock=t.clock, sleep=t.sleep))
+            clock=t.clock, sleep=t.sleep, link_state=unknown_state))
         try:
             # Run well past 300s of fake time so a second clear becomes eligible.
             for _ in range(3000):
