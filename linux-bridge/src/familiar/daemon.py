@@ -5,7 +5,7 @@ import os
 import sys
 from datetime import date, datetime
 
-from . import haiku, heartbeat, tidbyt, transcript
+from . import archive, haiku, heartbeat, tidbyt, transcript
 from .calendar_mood import calendar_mood
 from .config import load
 from .state import SessionStore
@@ -333,12 +333,19 @@ async def _on_connect(transport, owner):
         await transport.send(heartbeat.encode(heartbeat.owner_msg(owner)))
 
 
-def _make_compose(cfg):
+def _make_compose(cfg, append=None):
     if not cfg.api_key:
         return None
+    write = append or archive.append
 
     async def compose(digest):
-        return await haiku.compose(digest, api_key=cfg.api_key, model=cfg.model)
+        lines = await haiku.compose(digest, api_key=cfg.api_key, model=cfg.model)
+        # Archive here, not in Bridge: this is the single point every successful
+        # compose passes through, and cfg (the model id, the opt-out) is already
+        # in scope. Bridge stays ignorant that an archive exists.
+        if lines and cfg.haiku_archive:
+            write(lines, model=cfg.model, prompt=archive.prompt_id(haiku.SYSTEM))
+        return lines
 
     return compose
 

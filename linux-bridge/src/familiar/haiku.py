@@ -8,7 +8,7 @@ import json
 import urllib.request
 
 _URL = "https://api.anthropic.com/v1/messages"
-_SYSTEM = (
+SYSTEM = (
     "You are a tiny desk pet who narrates a programmer's coding session ONLY in "
     "haiku. Reply with exactly one haiku: three lines of roughly 5-7-5 "
     "syllables, evocative and a little playful. "
@@ -43,7 +43,7 @@ def _post(api_key: str, model: str, digest: str, timeout: float) -> str:
     payload = {
         "model": model,
         "max_tokens": 120,
-        "system": _SYSTEM,
+        "system": SYSTEM,
         "messages": [{"role": "user", "content": digest}],
     }
     req = urllib.request.Request(

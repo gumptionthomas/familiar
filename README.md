@@ -19,6 +19,11 @@ firmware:
   in verse; the desk-pet firmware left that behind, so this puts it back. (Plus
   two single-user tweaks: `busy` at one running session instead of three, and a
   rebalanced portrait charging clock.)
+  Every composed haiku is archived locally to
+  `~/.local/share/familiar/haikus.jsonl`; `familiar haikus --stats` surfaces the
+  trends (recurring imagery, repeated lines, and whether the model is obeying the
+  prompt's ban on tired tropes). Outputs only — the model's input is never stored.
+  Set `haiku_archive = false` to opt out.
 - **A Tidbyt companion.** The same bridge can drive a [Tidbyt](https://tidbyt.com)
   64×32 display — the pet, state-reflective, in any of eighteen ASCII species,
   with the haiku scrolling past when a turn ends. Still rough for hands-off
