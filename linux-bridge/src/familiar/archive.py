@@ -12,6 +12,8 @@ because a log file failed.
 import hashlib
 import json
 import os
+import re
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
@@ -77,3 +79,78 @@ def load(path: Path = DEFAULT_PATH, limit: int | None = None) -> list[dict]:
     except Exception:
         return []
     return recs[-limit:] if limit else recs
+
+
+# Small and deliberate: enough to stop "the" topping every report, no more.
+STOPWORDS = {
+    "the", "a", "an", "of", "in", "on", "and", "to", "is", "it", "its",
+    "with", "at", "by", "for", "from", "as", "into",
+}
+
+# Imagery the system prompt explicitly BANS ("Avoid the tired tropes: no
+# keyboards, keys, clicking, typing fingers, glowing screens, or blinking
+# cursors"). Counting these measures whether the model obeys its own prompt --
+# the one statistic most likely to change what you do about it.
+TROPES = [
+    "keyboard", "keyboards", "key", "keys", "click", "clicking", "clicks",
+    "type", "typing", "typed", "finger", "fingers", "screen", "screens",
+    "glow", "glowing", "cursor", "cursors", "blink", "blinking",
+]
+
+_WORD = re.compile(r"[a-z']+")
+
+
+def _words(rec) -> set[str]:
+    """The distinct lowercase words in one haiku (a SET: we measure how many
+    haikus contain a word, not how many times it occurs)."""
+    text = " ".join(rec.get("lines") or []).lower()
+    return set(_WORD.findall(text))
+
+
+def _doc_freq(records, vocabulary=None):
+    """(word, n_haikus, share) desc -- the share of haikus containing the word."""
+    total = len(records)
+    if not total:
+        return []
+    seen = Counter()
+    for rec in records:
+        for w in _words(rec):
+            if vocabulary is not None and w not in vocabulary:
+                continue
+            if vocabulary is None and (w in STOPWORDS or len(w) < 3):
+                continue
+            seen[w] += 1
+    return [(w, n, n / total)
+            for w, n in sorted(seen.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
+def _repeated_lines(records):
+    """Lines emitted verbatim in two or more DIFFERENT haikus, desc."""
+    counts = Counter()
+    for rec in records:
+        # dedupe within one haiku: repeating a line inside a poem is a choice,
+        # reusing it across poems is staleness.
+        for line in {" ".join((ln or "").lower().split())
+                     for ln in (rec.get("lines") or []) if ln.strip()}:
+            counts[line] += 1
+    return sorted(((ln, n) for ln, n in counts.items() if n >= 2),
+                  key=lambda kv: (-kv[1], kv[0]))
+
+
+def stats(records) -> dict:
+    records = list(records)
+    by_prompt = {}
+    for pid in sorted({r.get("prompt", "") for r in records}):
+        group = [r for r in records if r.get("prompt", "") == pid]
+        by_prompt[pid] = {
+            "count": len(group),
+            "imagery": _doc_freq(group)[:10],
+            "tropes": _doc_freq(group, vocabulary=set(TROPES)),
+        }
+    return {
+        "count": len(records),
+        "imagery": _doc_freq(records)[:20],
+        "repeated": _repeated_lines(records),
+        "tropes": _doc_freq(records, vocabulary=set(TROPES)),
+        "by_prompt": by_prompt,
+    }

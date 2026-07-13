@@ -71,3 +71,71 @@ def test_load_limit_keeps_the_most_recent(tmp_path):
         archive.append([str(i)], model="m", prompt="p", path=p)
     recs = archive.load(p, limit=2)
     assert [r["lines"] for r in recs] == [["3"], ["4"]]   # newest 2, oldest first
+
+
+def _rec(lines, prompt="p1"):
+    return {"ts": "2026-07-13T00:00:00+00:00", "lines": lines,
+            "model": "m", "prompt": prompt}
+
+
+def test_imagery_is_document_frequency_not_raw_count():
+    # "silence" appears THREE times, but all inside ONE haiku out of ten.
+    # That is one haiku using a word, not a rut -> 10%, NOT 30%.
+    # A metric that can't tell these apart is worthless, which is the whole point.
+    recs = [_rec(["silence silence", "silence falls", "dusk"])]
+    recs += [_rec(["nothing here", "moving on", "quite fresh"]) for _ in range(9)]
+    st = archive.stats(recs)
+    imagery = dict((w, share) for w, _n, share in st["imagery"])
+    assert imagery["silence"] == pytest.approx(0.1)
+
+
+def test_imagery_drops_stopwords_and_ranks_by_share():
+    recs = [_rec(["the quiet hum", "of the machine"]),
+            _rec(["the quiet dusk", "a lantern"])]
+    st = archive.stats(recs)
+    words = [w for w, _n, _s in st["imagery"]]
+    assert "the" not in words and "of" not in words and "a" not in words
+    assert words[0] == "quiet"          # in both haikus -> ranked first
+
+
+def test_repeated_lines_counted_across_haikus_not_within_one():
+    recs = [_rec(["a silent hum", "a silent hum"]),   # twice in ONE haiku -> not repeat
+            _rec(["a lantern sways"]),
+            _rec(["a lantern sways"])]                # across TWO haikus -> a repeat
+    st = archive.stats(recs)
+    repeated = dict(st["repeated"])
+    assert repeated == {"a lantern sways": 2}
+
+
+def test_repeated_lines_normalise_case_and_whitespace():
+    recs = [_rec(["The Lantern Sways"]), _rec(["  the lantern sways  "])]
+    st = archive.stats(recs)
+    assert dict(st["repeated"]) == {"the lantern sways": 2}
+
+
+def test_tropes_flag_banned_imagery_case_insensitively():
+    # The system prompt bans cursors and glowing screens. Measure whether it worked.
+    recs = [_rec(["the Cursor blinks", "a glowing screen", "dusk"]),
+            _rec(["a lantern sways", "nothing banned", "here"])]
+    st = archive.stats(recs)
+    tropes = dict((w, share) for w, _n, share in st["tropes"])
+    assert tropes["cursor"] == pytest.approx(0.5)
+    assert tropes["screen"] == pytest.approx(0.5)
+    assert "keyboard" not in tropes          # never seen -> not reported
+
+
+def test_stats_of_an_empty_archive_does_not_divide_by_zero():
+    st = archive.stats([])
+    assert st["count"] == 0
+    assert st["imagery"] == [] and st["repeated"] == [] and st["tropes"] == []
+    assert st["by_prompt"] == {}
+
+
+def test_stats_group_by_prompt_version():
+    recs = [_rec(["quiet dusk"], prompt="v1"), _rec(["quiet dawn"], prompt="v1"),
+            _rec(["loud noon"], prompt="v2")]
+    st = archive.stats(recs)
+    assert st["by_prompt"]["v1"]["count"] == 2
+    assert st["by_prompt"]["v2"]["count"] == 1
+    v1 = dict((w, share) for w, _n, share in st["by_prompt"]["v1"]["imagery"])
+    assert v1["quiet"] == pytest.approx(1.0)      # both v1 haikus -> 100%
