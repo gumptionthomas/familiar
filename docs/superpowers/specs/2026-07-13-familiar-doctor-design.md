@@ -97,6 +97,47 @@ X"* honestly rather than guessing. Guessing is what cost us the day.
 
 ## The diagnoses
 
+### The structural rule: an unknown fact is never read as "fine"
+
+Three review rounds found four Critical defects in `diagnose()`, and every one was the
+**same bug wearing a different hat**: a `None` fact — "we could not determine this" — silently
+treated as "clean" or "fine" at some call site the author forgot to guard. The worst instance:
+`log.get("not_found") or 0` turned "we could not read the journal" into "the journal was
+clean", so a `journalctl` timeout on a cold journal (a 5-second subprocess timeout on a large
+journal is a normal, not exotic, event) during the real 2026-07-13-class failure printed
+**"Everything looks healthy"**.
+
+Re-implementing the "unknown must not be fine" rule by hand at every branch does not work — it
+was tried three times and a site kept getting missed. **The rule is now enforced structurally,
+not by vigilance:**
+
+- `_unknown_sweep(facts)` runs once, before any trigger logic, and walks every fact that is
+  *relevant to the current mode* (BLE facts do not apply in `tidbyt` mode, and are not swept
+  there — sweeping an irrelevant fact would be a new false positive, not caution). For every
+  such fact that is `None`, it emits exactly one `warn(blocks_health=True)` finding, deduplicated
+  by label so an unreadable journal (which blanks both `discover_failures` and `not_found`)
+  produces ONE warning, not two.
+- Downstream trigger logic (`failing`, `bond_fires`, `phantom_fires`, …) is free to treat an
+  unknown windowed count as "does not meet this threshold" for the purpose of deciding whether a
+  *specific* diagnosis fires (via the `_meets(x, n)` helper, which returns `False` for `None`
+  rather than crashing or coercing to `0`) — this is safe only *because* the sweep has
+  independently already guaranteed `blocks_health` is set for that same `None`. The two
+  mechanisms are deliberately decoupled: one decides whether a specific cause fires, the other
+  decides whether the tool is allowed to claim things are fine. Neither can be quietly deleted
+  without the other still catching the case — the sweep is the backstop.
+- `diagnose()` itself is a thin wrapper around a pure `_diagnose()`: if `_diagnose()` returns an
+  empty list — every trigger stayed silent AND the tool was not allowed to claim health either —
+  the wrapper appends an explicit "no specific fault found, but this is not healthy" finding.
+  **`diagnose()` must never return an empty list.** A blank report used to be produced by a dead
+  stick with a sub-threshold failure count (`not_found=1`, below `LINK_FAILING_MIN`): zero
+  findings, a blank line, exit 0. A blank report is the worst possible output of a diagnostic.
+
+`kernel_smp_errors` is deliberately **not** part of the sweep: it is corroborating evidence, not
+a required fact — the log-volume trigger (`BOND_FAILURES_ALONE`) already covers an unreadable
+kernel log without needing its own warning, and treating its absence as "no corroboration"
+(rather than "unhealthy") does not create false confidence, since it is never used on its own to
+justify a health claim.
+
 ### The window-vs-instant model (read this before the trigger list)
 
 Two of the facts `collect()` gathers look similar but are NOT the same kind of evidence:
@@ -336,6 +377,33 @@ subprocess, no BLE**.
     `warn` finding (not the benign pairable one) with `blocks_health = True` actually
     suppresses the `ok` summary — tested with `device.connected = True` so the separate
     connected-is-False guard can't be what saves the assertion.
+
+**Round 3/4 additions — the structural "unknown is never fine" rule, pinned so it cannot regress
+one branch at a time:**
+
+20. An unreadable journal (`discover_failures`, `not_found`, and `kernel_smp_errors` all `None`)
+    with the device sampled `connected: True` mid-loop → the sweep fires, `blocks_health` is set,
+    and the `ok` summary is never printed. This is `test_an_unreadable_journal_never_reads_as_healthy`
+    — the direct regression test for the "5-second `journalctl` timeout during the real failure"
+    scenario.
+21. A dead stick (`connected: False`, `not_found = 1`, below `LINK_FAILING_MIN`) → `diagnose()`
+    still returns a non-empty finding list, and it is not an `ok` finding. This is
+    `test_diagnose_never_returns_an_empty_report` — the direct regression test for a blank report
+    on a genuinely dead buddy.
+22. Each of `service.active`, `adapter.pairable`, `device.connected`, `device.paired` set to
+    `None` in isolation (all other facts healthy) → the `ok` summary is suppressed every time.
+    This is the sweep test: it proves the rule holds at every site the sweep covers, not just the
+    two sites that happened to get hand-written checks before.
+23. A Tidbyt-only setup with every BLE/device/adapter fact `None` → no errors, and the `ok`
+    summary is STILL printed, because those facts are irrelevant in `tidbyt` mode and must not be
+    swept. Proves the sweep is mode-aware, not a blanket "any None anywhere" check.
+24. **Mutation pins for round 3/4:** `LINK_FAILING_MIN == 3` (a single blip, `discover_failures =
+    1`, must not trigger the "link is flapping" warning); the phantom trigger's `connected is
+    True` check (a dead stick with a high `not_found` count must never be diagnosed as a
+    "phantom link" — the wrong remedy, `bluetoothctl disconnect`, would be printed); and the
+    "stick not reachable" finding's `blocks_health` flag, asserted directly on the `Finding`
+    object rather than inferred from the summary — the separate `connected is False`
+    belt-and-suspenders guard would otherwise mask a flipped flag in that exact scenario.
 
 ## Out of scope
 

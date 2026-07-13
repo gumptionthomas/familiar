@@ -455,3 +455,95 @@ def test_blocks_health_gate_is_not_bypassable_by_deleting_the_check():
     assert warns and any(f.blocks_health for f in warns), \
         "the flapping warn must set blocks_health"
     assert not any(f.level == "ok" for f in findings)
+
+
+# --- round 3/4: an unknown fact is never read as "fine" (structural) -------
+
+
+def test_an_unreadable_journal_never_reads_as_healthy():
+    # THE BUG CLASS. `None` means "couldn't read the journal", NOT "it was clean".
+    # A 5s journalctl timeout on a cold journal, plus a device sampled Connected:
+    # yes mid-failure-loop, made doctor print "Everything looks healthy" during
+    # the exact failure it exists to catch.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        kernel_smp_errors=None,
+        log={"discover_failures": None, "not_found": None,
+             "phantom_clears": None, "connected_recently": None},
+    ))
+    assert not any(f.level == "ok" for f in findings), \
+        "we could not read the log -- we must not claim health"
+    assert any(f.level == "warn" and f.blocks_health for f in findings)
+
+
+def test_diagnose_never_returns_an_empty_report():
+    # A dead stick with a sub-threshold failure count produced ZERO findings:
+    # a blank line and exit 0. A blank report is the worst output a diagnostic
+    # can give.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": False},
+        log={"not_found": 1, "discover_failures": 0, "connected_recently": False},
+    ))
+    assert findings, "a diagnostic must never print nothing"
+    assert not any(f.level == "ok" for f in findings)
+
+
+def test_every_unknown_fact_suppresses_the_health_claim():
+    # The sweep: ANY relevant fact we could not determine must produce a
+    # blocks_health warning, so the rule cannot be forgotten at a new site.
+    for path in [("service", "active"), ("adapter", "pairable"),
+                 ("device", "connected"), ("device", "paired")]:
+        section, key = path
+        findings = doctor.diagnose(_facts(**{section: {key: None}}))
+        assert not any(f.level == "ok" for f in findings), \
+            f"{section}.{key} unknown must suppress the health summary"
+
+
+def test_tidbyt_only_mode_does_not_warn_about_irrelevant_ble_facts():
+    # In Tidbyt-only mode the BLE facts are IRRELEVANT, not unknown. Warning
+    # about them would be a new false positive.
+    findings = doctor.diagnose(_facts(
+        config={"mode": "tidbyt", "address": None, "tidbyt": True},
+        adapter={"powered": None, "pairable": None},
+        device={"known": None, "paired": None, "bonded": None,
+                "trusted": None, "connected": None},
+        log={"discover_failures": None, "not_found": None,
+             "phantom_clears": None, "connected_recently": None},
+    ))
+    assert [f for f in findings if f.level == "error"] == []
+    assert any(f.level == "ok" for f in findings), \
+        "a healthy Tidbyt-only setup is healthy"
+
+
+def test_a_single_blip_is_not_flapping(monkeypatch):
+    # Pins LINK_FAILING_MIN: dropping it to 1 would resurrect round 1's cry-wolf.
+    findings = doctor.diagnose(_facts(
+        device={"connected": True},
+        log={"discover_failures": 1, "connected_recently": False}))
+    assert [f for f in findings if f.level == "error"] == []
+    assert any(f.level == "ok" for f in findings)
+
+
+def test_a_dead_stick_is_not_called_a_phantom_link():
+    # Pins the phantom trigger's `connected is True` check -- the ONLY legitimate
+    # use of the instantaneous sample. Without it, a dead stick gets the wrong
+    # remedy (`bluetoothctl disconnect`).
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": False},
+        log={"not_found": 20, "discover_failures": 0, "connected_recently": False},
+    ))
+    assert not any("phantom" in f.title.lower() for f in findings)
+
+
+def test_unreachable_findings_blocks_health_flag_is_pinned():
+    # The reviewer flipped the "stick not reachable" finding's blocks_health
+    # from True to False and nothing caught it -- the separate "never claim
+    # health while cfg.mode==ble and connected is False" guard happens to
+    # rescue the *summary* in this exact scenario regardless of the flag, so
+    # this asserts the flag directly rather than relying on that guard.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": False},
+        log={"not_found": 20, "discover_failures": 0, "connected_recently": False},
+    ))
+    unreachable = next(f for f in findings if "not reachable" in f.title.lower())
+    assert unreachable.blocks_health is True

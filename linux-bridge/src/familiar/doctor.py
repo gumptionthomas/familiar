@@ -57,6 +57,83 @@ BOND_FAILURES_ALONE = 10
 LINK_FAILING_MIN = 3
 
 
+def _meets(x, n):
+    """True only if `x` is a KNOWN count that is >= n.
+
+    An unknown (`None`) count never satisfies a threshold -- but that is not
+    the same as treating it as 0/clean. `None` here just means this local
+    trigger cannot fire from this signal; the structural guarantee that we
+    never call the result "healthy" comes from `_unknown_sweep` below, which
+    independently emits a `blocks_health` warning for the very same `None`.
+    The two mechanisms are deliberately separate: this one decides whether a
+    SPECIFIC diagnosis fires, that one decides whether we're allowed to claim
+    things are fine.
+    """
+    return x is not None and x >= n
+
+
+# Every fact we could not determine emits a warning that suppresses the
+# health claim. This is a SWEEP, not a per-branch check, because three review
+# rounds found four Criticals that were all the same bug: a `None` fact
+# silently read as "fine" at some site the author forgot to guard. `None`
+# means "couldn't check", never "fine" -- structure enforces that here, not
+# vigilance at each call site.
+#
+# kernel_smp_errors is deliberately NOT here: it is corroboration, not a
+# required fact -- the log-volume trigger (BOND_FAILURES_ALONE) covers an
+# unreadable kernel log without needing its own warning.
+_UNKNOWN_LABELS = {
+    ("service", "active"):        "whether the service is running",
+    ("adapter", "pairable"):      "whether the adapter is pairable",
+    ("device", "connected"):      "whether the stick is connected",
+    ("device", "paired"):         "whether the stick is paired",
+    ("log", "discover_failures"): "the daemon's recent log",
+    ("log", "not_found"):         "the daemon's recent log",
+}
+
+
+def _unknown_sweep(facts: dict) -> list["Finding"]:
+    """One `warn(blocks_health=True)` per fact we could not determine, for
+    only the facts relevant to the CURRENT mode.
+
+    In `tidbyt` mode the BLE/device/adapter facts are IRRELEVANT, not
+    unknown -- warning about them would be a brand-new false positive, so
+    they are simply not swept in that mode. Labels are de-duplicated so an
+    unreadable journal (which blanks both `discover_failures` and
+    `not_found`) produces ONE warning, not two.
+    """
+    cfg = facts.get("config") or {}
+    svc = facts.get("service") or {}
+    adapter = facts.get("adapter") or {}
+    dev = facts.get("device") or {}
+    log = facts.get("log") or {}
+
+    checks = [("service", "active", svc.get("active"))]
+    if cfg.get("mode") == "ble" and cfg.get("address"):
+        checks += [
+            ("adapter", "pairable", adapter.get("pairable")),
+            ("device", "connected", dev.get("connected")),
+            ("device", "paired", dev.get("paired")),
+            ("log", "discover_failures", log.get("discover_failures")),
+            ("log", "not_found", log.get("not_found")),
+        ]
+
+    out, seen = [], set()
+    for section, key, value in checks:
+        if value is not None:
+            continue
+        label = _UNKNOWN_LABELS[(section, key)]
+        if label in seen:
+            continue
+        seen.add(label)
+        out.append(Finding(
+            "warn", f"Could not determine {label}",
+            "This could not be checked, so it cannot be read as fine -- an "
+            "unknown fact is never evidence of health.", [],
+            blocks_health=True))
+    return out
+
+
 _REPAIR = [
     "systemctl --user stop familiar",
     "bluetoothctl",
@@ -81,7 +158,33 @@ def _repair_steps(addr):
 
 
 def diagnose(facts: dict) -> list[Finding]:
-    """Facts in, findings out. PURE — never do I/O here."""
+    """Facts in, findings out. PURE — never do I/O here.
+
+    This is a thin wrapper around `_diagnose` that enforces one structural
+    guarantee: the result is NEVER empty. `_diagnose` returning `[]` means
+    every trigger stayed silent AND we were not allowed to claim health
+    either (see the early-return sites inside it) -- that combination used
+    to print a blank line and exit 0 on a genuinely dead stick. A blank
+    report is the worst output a diagnostic tool can give, so this is
+    enforced here once, structurally, rather than by remembering to append a
+    fallback at every return site inside `_diagnose`.
+    """
+    out = _diagnose(facts)
+    if out:
+        return out
+    dev = (facts.get("device") or {})
+    state = ("not connected" if dev.get("connected") is False
+              else "in a state we could not classify")
+    return [Finding(
+        "warn", "No specific fault found, but this is not healthy",
+        f"Nothing matched a known diagnosis, and the buddy is {state}, so "
+        "this cannot be reported as healthy either. Try again in a minute, "
+        "or check the service log directly:",
+        ["journalctl --user -u familiar.service -n 50"],
+        blocks_health=True)]
+
+
+def _diagnose(facts: dict) -> list[Finding]:
     out = []
     cfg = facts.get("config") or {}
     svc = facts.get("service") or {}
@@ -98,6 +201,12 @@ def diagnose(facts: dict) -> list[Finding]:
             ["familiar init"]))
         return out
 
+    # --- the sweep: an unknown fact is never read as "fine" -----------------
+    # Must run before any trigger below, and before the health gate at the
+    # bottom -- it is what makes that gate trustworthy instead of another
+    # site someone has to remember to guard.
+    out.extend(_unknown_sweep(facts))
+
     # --- service ------------------------------------------------------------
     if svc.get("active") is False:
         out.append(Finding(
@@ -106,11 +215,7 @@ def diagnose(facts: dict) -> list[Finding]:
             "feeding the buddy.",
             ["systemctl --user start familiar"]
             if svc.get("installed") else ["familiar init --service"]))
-    elif svc.get("active") is None:
-        out.append(Finding(
-            "warn", "Could not check the service",
-            "systemctl did not answer. If you run the daemon by hand, this is "
-            "expected.", [], blocks_health=True))
+    # svc.get("active") is None is handled by the sweep above, not here.
 
     if svc.get("active") and (svc.get("manual_procs") or 0) > 0:
         pids = svc.get("manual_pids") or []
@@ -142,32 +247,40 @@ def diagnose(facts: dict) -> list[Finding]:
                 "checks were skipped.", [], blocks_health=True))
         else:
             connected = dev.get("connected")
-            not_found = log.get("not_found") or 0
-            discover_fails = log.get("discover_failures") or 0
-            smp = facts.get("kernel_smp_errors") or 0
+            # NEVER coerce an unknown windowed count into a number: `None`
+            # means "could not read the journal", not "it was clean". These
+            # stay `None`-able all the way through; `_meets` treats an
+            # unknown count as not meeting any threshold (so it cannot
+            # fabricate a trigger), while `_unknown_sweep` above has ALREADY
+            # emitted a `blocks_health` warning for the same `None` -- so a
+            # `None` window can never silently read as a healthy one.
+            not_found = log.get("not_found")
+            discover_fails = log.get("discover_failures")
+            smp = facts.get("kernel_smp_errors")
 
             # The WINDOW decides whether the link is working. The
             # instantaneous `connected` sample must never veto it: during the
             # real failure the daemon loops connect -> discovery-fails ->
             # disconnect, so bluetoothctl legitimately says Connected: yes
             # for the seconds the link is up.
-            failing = (discover_fails >= LINK_FAILING_MIN
-                       or not_found >= LINK_FAILING_MIN)
+            failing = (_meets(discover_fails, LINK_FAILING_MIN)
+                       or _meets(not_found, LINK_FAILING_MIN))
 
             # Grade the one-sided-bond evidence by confidence. NONE of these
             # branches consult `connected` -- that is the fix.
             bond_fires = (
                 dev.get("paired") is False                        # definitive
-                or (failing and discover_fails >= BOND_MIN_FAILURES
-                    and smp > 0)                                   # fingerprint
-                or (failing and discover_fails >= BOND_FAILURES_ALONE))
+                or (failing and _meets(discover_fails, BOND_MIN_FAILURES)
+                    and _meets(smp, 1))                            # fingerprint
+                or (failing and _meets(discover_fails, BOND_FAILURES_ALONE)))
 
             # Only HERE does the instant sample matter, and only to
             # distinguish the failure type: a connected peripheral stops
             # advertising, so "connected" plus the daemon still reporting
             # "was not found" means BlueZ is holding a link the daemon can't
             # use.
-            phantom_fires = failing and connected is True and not_found > 0
+            phantom_fires = (failing and connected is True
+                              and _meets(not_found, 1))
 
             # A dead / flat / out-of-range stick: BlueZ keeps the paired
             # record forever, so this shows up as "was not found" climbing
@@ -176,7 +289,7 @@ def diagnose(facts: dict) -> list[Finding]:
             # either. Only reported when the bond finding didn't already
             # explain it.
             unreachable_fires = (
-                failing and not_found >= LINK_FAILING_MIN
+                failing and _meets(not_found, LINK_FAILING_MIN)
                 and connected is not True and not bond_fires)
 
             # Failing, but none of the above -- the daemon's normal
@@ -257,11 +370,8 @@ def diagnose(facts: dict) -> list[Finding]:
                     "this often clears on its own. Re-run `familiar doctor` "
                     "if it persists.", [], blocks_health=True))
 
-            elif connected is None:
-                out.append(Finding(
-                    "warn", "Could not check the link",
-                    "bluetoothctl did not answer for this device.", [],
-                    blocks_health=True))
+            # connected is None (bluetoothctl didn't answer for this device)
+            # is handled by the sweep above, not here.
 
     # Only claim health if we actually managed to CHECK. A warn about a KNOWN
     # state (e.g. pairable=no) is informative, not a gap -- it must not
