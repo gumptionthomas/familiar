@@ -31,12 +31,30 @@ class Finding:
     blocks_health: bool = False
 
 
-# Minimum `failed to discover services` count, with no recent connect, that
-# counts as corroborating evidence for a one-sided bond WHEN the kernel log
-# also shows SMP errors for our MAC. (A much higher count, with no kernel
-# corroboration at all, is damning on its own -- see _BOND_MIN_FAILURES_ALONE.)
+# `device.connected` (from `bluetoothctl info`, right now) is an INSTANTANEOUS
+# sample. `log.discover_failures` / `log.not_found` / `kernel_smp_errors` are
+# counts over the last 10 minutes -- a WINDOW. During the real 2026-07-13
+# failure the daemon loops connect -> GATT discovery fails -> disconnect ->
+# back off, so BlueZ genuinely reports Connected: yes for the seconds the link
+# is up. A trigger gated on `connected is not True` can sample mid-loop, see
+# "connected", and skip every diagnosis -- which is exactly how this command's
+# namesake failure printed "healthy" with 400 discovery failures and the
+# kernel's SMP fingerprint sitting unread. THE RULE: an instantaneous sample
+# must never veto windowed evidence. The window alone decides whether the
+# link is failing; the instant sample is consulted only to tell WHICH
+# failure it is (see `failing` below).
+
+# Minimum `discover_failures` in the window that counts as corroborating
+# evidence for a one-sided bond WHEN the kernel log also shows SMP errors for
+# our MAC. (A much higher count, with no kernel corroboration at all, is
+# damning on its own -- see BOND_FAILURES_ALONE.)
 BOND_MIN_FAILURES = 3
-_BOND_MIN_FAILURES_ALONE = 10
+# `discover_failures` alone, with no kernel corroboration (e.g. an unreadable
+# journal), that is damning on volume alone.
+BOND_FAILURES_ALONE = 10
+# Below this many discover_failures / not_found events in the window, treat
+# the log as noise -- not evidence the link is actually failing.
+LINK_FAILING_MIN = 3
 
 
 _REPAIR = [
@@ -124,23 +142,49 @@ def diagnose(facts: dict) -> list[Finding]:
                 "checks were skipped.", [], blocks_health=True))
         else:
             connected = dev.get("connected")
-            recently = log.get("connected_recently")
             not_found = log.get("not_found") or 0
             discover_fails = log.get("discover_failures") or 0
             smp = facts.get("kernel_smp_errors") or 0
 
-            # Grade the one-sided-bond evidence by confidence BEFORE deciding
-            # anything else -- a currently connected link can't simultaneously
-            # be a one-sided bond, and the pairable finding below needs to
-            # know whether a re-pair is actually about to be advised.
-            phantom_fires = (connected is True and recently is False
-                              and not_found > 0)
-            bond_fires = (not phantom_fires) and (
-                dev.get("paired") is False                       # definitive
-                or (connected is not True
-                    and discover_fails >= BOND_MIN_FAILURES and smp > 0)
-                or (connected is not True
-                    and discover_fails >= _BOND_MIN_FAILURES_ALONE))
+            # The WINDOW decides whether the link is working. The
+            # instantaneous `connected` sample must never veto it: during the
+            # real failure the daemon loops connect -> discovery-fails ->
+            # disconnect, so bluetoothctl legitimately says Connected: yes
+            # for the seconds the link is up.
+            failing = (discover_fails >= LINK_FAILING_MIN
+                       or not_found >= LINK_FAILING_MIN)
+
+            # Grade the one-sided-bond evidence by confidence. NONE of these
+            # branches consult `connected` -- that is the fix.
+            bond_fires = (
+                dev.get("paired") is False                        # definitive
+                or (failing and discover_fails >= BOND_MIN_FAILURES
+                    and smp > 0)                                   # fingerprint
+                or (failing and discover_fails >= BOND_FAILURES_ALONE))
+
+            # Only HERE does the instant sample matter, and only to
+            # distinguish the failure type: a connected peripheral stops
+            # advertising, so "connected" plus the daemon still reporting
+            # "was not found" means BlueZ is holding a link the daemon can't
+            # use.
+            phantom_fires = failing and connected is True and not_found > 0
+
+            # A dead / flat / out-of-range stick: BlueZ keeps the paired
+            # record forever, so this shows up as "was not found" climbing
+            # with no confirmed connect -- not as a phantom (connected is not
+            # True) and, below BOND_FAILURES_ALONE, not as a bond failure
+            # either. Only reported when the bond finding didn't already
+            # explain it.
+            unreachable_fires = (
+                failing and not_found >= LINK_FAILING_MIN
+                and connected is not True and not bond_fires)
+
+            # Failing, but none of the above -- the daemon's normal
+            # backoff-and-retry. Never send someone to hand-pair on this: a
+            # healthy long-lived link has NO "connected" line in the last 10
+            # minutes either, since that is the steady state.
+            flapping_fires = failing and not (
+                bond_fires or phantom_fires or unreachable_fires)
 
             # The adapter first: a re-pair CANNOT work while it is not
             # pairable, so telling the user to re-pair before this is fixed
@@ -180,7 +224,7 @@ def diagnose(facts: dict) -> list[Finding]:
                     "advertising. Something left a stale link behind.",
                     [f"bluetoothctl disconnect {addr}"]))
 
-            elif bond_fires:
+            if bond_fires:
                 out.append(Finding(
                     "error", "The M5 is not paired (a one-sided bond)",
                     "The stick has lost its pairing keys (its screen shows "
@@ -193,25 +237,25 @@ def diagnose(facts: dict) -> list[Finding]:
                     "stick.",
                     _repair_steps(addr)))
 
-            # Below the bond thresholds, but still failing and not connected:
-            # this is the daemon's normal backoff-and-retry, not evidence of
-            # a broken bond. Never send someone to hand-pair on thin evidence
-            # -- a healthy long-lived link has NO "connected" line in the
-            # last 10 minutes either, since that is the steady state.
-            elif connected is not True and discover_fails > 0:
+            if unreachable_fires:
+                out.append(Finding(
+                    "warn", "The stick is not reachable",
+                    f"{not_found} recent 'was not found' with no confirmed "
+                    "connect. The stick is off, flat, or out of range -- "
+                    "BlueZ keeps a paired device's record forever, so this "
+                    "isn't the same as losing the bond.",
+                    ["# press any button on the stick; check it is charged",
+                     "# and that bluetooth is on in its settings menu"],
+                    blocks_health=True))
+
+            elif flapping_fires:
                 out.append(Finding(
                     "warn", "The link is flapping",
                     f"{discover_fails} recent 'failed to discover services' "
-                    "with no confirmed reconnect yet. The daemon retries "
-                    "with backoff, and this often clears on its own. "
-                    "Re-run `familiar doctor` if it persists.", []))
-
-            elif dev.get("known") is False:
-                out.append(Finding(
-                    "warn", "The stick is not advertising",
-                    "BlueZ has never seen it. It may be asleep or flat.",
-                    ["# press any button on the stick; check it is charged",
-                     "# and that bluetooth is on in its settings menu"]))
+                    f"and {not_found} 'was not found', with no confirmed "
+                    "reconnect yet. The daemon retries with backoff, and "
+                    "this often clears on its own. Re-run `familiar doctor` "
+                    "if it persists.", [], blocks_health=True))
 
             elif connected is None:
                 out.append(Finding(
@@ -221,10 +265,17 @@ def diagnose(facts: dict) -> list[Finding]:
 
     # Only claim health if we actually managed to CHECK. A warn about a KNOWN
     # state (e.g. pairable=no) is informative, not a gap -- it must not
-    # suppress the summary. But a warn meaning "couldn't check" must: claiming
-    # "everything looks healthy" when we could not look is exactly the false
-    # confidence this tool exists to prevent.
+    # suppress the summary. But every OTHER warn -- "couldn't check", "the
+    # link is flapping", "the stick is not reachable" -- sets blocks_health,
+    # and must suppress it: claiming "everything looks healthy" next to one
+    # of those is exactly the false confidence this tool exists to prevent.
     if any(f.level == "error" or f.blocks_health for f in out):
+        return out
+
+    # Belt and suspenders: even with no error and no blocks_health finding
+    # above, a BLE buddy that is sampled disconnected right now is not
+    # "healthy" -- never print the ok summary next to "not connected".
+    if cfg.get("mode") == "ble" and dev.get("connected") is False:
         return out
 
     bits = [f"mode={cfg.get('mode')}"]

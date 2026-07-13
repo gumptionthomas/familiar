@@ -97,6 +97,35 @@ X"* honestly rather than guessing. Guessing is what cost us the day.
 
 ## The diagnoses
 
+### The window-vs-instant model (read this before the trigger list)
+
+Two of the facts `collect()` gathers look similar but are NOT the same kind of evidence:
+
+- `device.connected` — from `bluetoothctl info <MAC>`, this is an **instantaneous sample**:
+  what BlueZ says the link state is right now, this half-second.
+- `log.discover_failures`, `log.not_found`, `kernel_smp_errors` — counts over the **last 10
+  minutes**: a window.
+
+Round 2 of review found a real regression caused by conflating the two: every trigger was
+gated on `connected is not True`. But during the actual 2026-07-13 failure the daemon loops
+**connect → GATT discovery fails → disconnect → back off**, so BlueZ genuinely reports
+`Connected: yes` for the seconds the link is up. Sample it in that window and every
+`connected`-gated trigger reads "connected" and skips — `doctor` printed "Everything looks
+healthy" with 400 discovery failures and 3 kernel SMP errors for our own MAC sitting unread in
+the facts. That is the exact failure this command exists to catch, reported as healthy.
+
+**The rule: an instantaneous sample must never veto windowed evidence.** Concretely, `diagnose`
+derives whether the link is failing from the window FIRST, before looking at `connected` at
+all:
+
+```python
+failing = (discover_failures >= LINK_FAILING_MIN     # 3
+           or not_found >= LINK_FAILING_MIN)
+```
+
+`connected` is then consulted only to tell WHICH failure is occurring — phantom link vs.
+one-sided bond vs. stick unreachable — never to decide whether one is occurring.
+
 Evaluated in a fixed order, and EVERY matching cause is reported (not just the first) --
 findings that would otherwise be masked (e.g. the adapter being unpairable *and* a one-sided
 bond) both need to reach the user, since fixing only one leaves the other blocking. The order
@@ -107,18 +136,18 @@ before the fixes that depend on them.
 
 **Triggered by**, graded by confidence so a single transient blip can never trigger it (a
 healthy long-lived link has no `[familiar] connected` line in the last 10 minutes either —
-that is the normal steady state, not evidence of failure):
+that is the normal steady state, not evidence of failure). **None of these three consult
+`connected`** — that is the round-2 fix:
 
 - **Definitive** — `device.paired is False`. BlueZ has no keys; nothing else is needed.
-- **Strongly corroborated** — not connected, `discover_failures >= BOND_MIN_FAILURES` (3),
-  **and** `kernel_smp_errors > 0` for *our* MAC. The kernel SMP error is the fingerprint.
-- **Damning on log volume alone** — not connected and `discover_failures >= 10` (covers an
-  unreadable kernel log, where `kernel_smp_errors` is `None`).
+- **Strongly corroborated** — `failing`, `discover_failures >= BOND_MIN_FAILURES` (3), **and**
+  `kernel_smp_errors > 0` for *our* MAC. The kernel SMP error is the fingerprint.
+- **Damning on log volume alone** — `failing` and `discover_failures >= BOND_FAILURES_ALONE`
+  (10) (covers an unreadable kernel log, where `kernel_smp_errors` is `None`).
 
-Below all three, but still failing and not connected, is reported as a `warn` ("the link is
-flapping") instead — the daemon retries with backoff and this often clears on its own. That
-warning never prints the re-pair recipe: sending someone to stop the service and hand-pair
-with a passkey on thin evidence is worse than saying nothing.
+Below all three, `failing` still routes to one of two other findings rather than being
+dropped on the floor (see §3 and §4 below) — a `failing` window with no matching bond evidence
+is never simply ignored.
 
 **Why:** the M5 lost its pairing keys (it then advertises as pairable — its screen shows
 "discover") while BlueZ still holds its own. Every connect: link up → the M5 sends
@@ -161,14 +190,44 @@ the re-pair recipe cannot succeed until this is fixed first.
 
 ### 3. Phantom link — `error`
 
-**Triggered by:** `device.connected is True` **and** the log shows `was not found` with no
-recent connect.
+**Triggered by:** `failing` **and** `device.connected is True` **and** `not_found > 0`.
+
+This is the ONE place the instantaneous `connected` sample is consulted, and only to
+distinguish this failure from the other two below — the window (`failing`, `not_found`) still
+gates whether a finding fires at all.
 
 **Why:** BlueZ holds a stale link the daemon cannot use. (The daemon self-heals this after 3
 failures, rate-limited to once per 5 minutes — so this finding mostly explains what you are
 already seeing in the log.)
 
 **Remedy:** `bluetoothctl disconnect <MAC>`
+
+### 3b. Stick not reachable — `warn`
+
+**Triggered by:** `failing` **and** `not_found >= LINK_FAILING_MIN` **and**
+`device.connected is not True` **and** the one-sided-bond finding (§1) did NOT fire.
+
+**Why:** the stick is off, flat, or out of range. BlueZ keeps a paired device's record
+forever, so this is distinct from losing the bond — `not_found` climbs with nothing else
+corroborating it.
+
+Before round 2, `not_found` was collected but read only by the phantom trigger above (which
+requires `connected is True`). A dead stick — `connected` sampled `False`, `not_found` high —
+matched no trigger at all, and `doctor` printed "Everything looks healthy ... not connected".
+This finding closes that gap.
+
+**Remedy:** press a button on the stick; check it is charged; confirm bluetooth is on in its
+settings menu.
+
+### 3c. Link flapping — `warn`
+
+**Triggered by:** `failing`, and none of §1 / §3 / §3b fired.
+
+**Why:** the daemon retries with backoff, and this often clears on its own. This finding never
+prints the re-pair recipe: sending someone to stop the service and hand-pair with a passkey on
+evidence too thin for §1 is worse than saying nothing.
+
+**Remedy:** none — re-run `familiar doctor` if it persists.
 
 ### 4. Two instances — `error`
 
@@ -191,16 +250,32 @@ disambiguate by hand.
 
 **Triggered by:** `config.mode == "none"`. **Remedy:** `familiar init`.
 
-### 7. Device not advertising — `warn`
+### 7. Could not check the link — `warn`
 
-**Triggered by:** an address is configured, the device is not connected, and BlueZ does not
-know it. **Why:** the stick may be asleep or flat. **Remedy:** press a button; check it is
-charged; confirm bluetooth is on in its settings menu.
+**Triggered by:** `have_bluetoothctl` is true, but `device.connected is None` (bluetoothctl
+didn't answer for this specific device) and no windowed finding (§1, §3, §3b, §3c) fired.
+Superseded as the primary "stick is unreachable" diagnosis by §3b, which uses the windowed
+`not_found` count instead of the instantaneous `known` sample — the same reasoning as the
+window-vs-instant rule above: a stale device record from `bluetoothctl info` risked missing
+the same class of failure.
 
 ### 8. Healthy — `ok`
 
 Connected, service active, nothing above triggered. Print the summary: mode, haiku on/off,
 Tidbyt on/off, archive size, link state.
+
+**The health summary is suppressed** (not printed, even with zero `error` findings) whenever:
+
+- any finding has `level == "error"`, OR
+- any finding has `blocks_health == True`. Every `warn` finding sets `blocks_health` EXCEPT
+  the benign "`Pairable: no`, existing bonds still work" one (§2) — that one describes a KNOWN,
+  harmless state, not a gap in what could be checked or evidence the link is unhealthy. Round 2
+  found that the flapping (§3c) and stick-not-reachable (§3b) warns were NOT setting
+  `blocks_health`, so `doctor` could print `?? The link is flapping` immediately followed by
+  `OK Everything looks healthy ... not connected` — an absurd, self-contradicting report.
+- `cfg.mode == "ble"` and `device.connected is False`, as a final belt-and-suspenders check
+  independent of the finding list: a BLE buddy sampled disconnected right now is never
+  "healthy," even in the (currently unreachable in practice) case where no other finding fired.
 
 ## Output
 
@@ -241,6 +316,26 @@ subprocess, no BLE**.
 11. Tidbyt-only mode (no address) → BLE diagnoses skipped, not reported as failures.
 12. `collect()` with `bluetoothctl` absent → returns a dict with `None` Bluetooth facts and
     does not raise.
+
+**Round 2 additions — pin the window-vs-instant rule so it cannot regress:**
+
+13. **The regression, encoded directly:** `device.connected is True` (sampled mid-loop) with
+    400 `discover_failures` and `kernel_smp_errors > 0` → must STILL produce the one-sided-bond
+    finding at `error`. An instantaneous sample must never veto windowed evidence.
+14. `discover_failures` in the `BOND_MIN_FAILURES..BOND_FAILURES_ALONE` corridor (e.g. 4) with
+    the kernel fingerprint → catches the bond early, before log volume alone would.
+15. `discover_failures >= BOND_FAILURES_ALONE` with `kernel_smp_errors = None` (unreadable
+    journal) → still fires, on volume alone.
+16. A flapping link (`failing`, no bond/phantom/unreachable evidence) → a `warn` finding, and
+    NO `ok` finding alongside it.
+17. An unreachable stick (`not_found` high, `connected` sampled `False`, no bond evidence) →
+    a `warn` or `error` finding, never silently produces zero findings.
+18. `have_bluetoothctl = False` → the resulting warn suppresses the `ok` summary.
+19. **Mutation pins**, added after the reviewer showed each mutation below passed the full
+    round-1 suite unnoticed: `BOND_MIN_FAILURES == 3`, `BOND_FAILURES_ALONE == 10`, and a
+    `warn` finding (not the benign pairable one) with `blocks_health = True` actually
+    suppresses the `ok` summary — tested with `device.connected = True` so the separate
+    connected-is-False guard can't be what saves the assertion.
 
 ## Out of scope
 

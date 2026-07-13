@@ -342,3 +342,116 @@ def test_a_genuine_manual_instance_is_still_detected(monkeypatch):
     assert facts["service"]["manual_procs"] == 1
     assert [f for f in doctor.diagnose(facts)
             if f.level == "error" and "instance" in f.title.lower()]
+
+
+# --- round 2: an instantaneous sample must never veto windowed evidence ----
+
+
+def test_the_real_failure_is_caught_even_if_bluetoothctl_samples_it_connected():
+    # THE REGRESSION. During the real failure the daemon loops connect ->
+    # discovery-fails -> disconnect, so bluetoothctl legitimately reports
+    # Connected: yes for the seconds the link is up. An instantaneous sample must
+    # NEVER veto 400 windowed failures and the kernel's SMP fingerprint.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},      # <- sampled mid-loop
+        kernel_smp_errors=3,
+        log={"discover_failures": 400, "connected_recently": False},
+    ))
+    errs = [f for f in findings if f.level == "error"]
+    assert errs, "400 failures + the SMP fingerprint must never read as healthy"
+    assert "KeyboardOnly" in "\n".join(errs[0].remedy)
+    assert not any(f.level == "ok" for f in findings)
+
+
+def test_the_early_catch_corridor_fires_on_smp_corroboration():
+    # 3-9 failures WITH the kernel fingerprint: catch it before 400 accumulate.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": False},
+        kernel_smp_errors=2,
+        log={"discover_failures": 4, "connected_recently": False},
+    ))
+    errs = [f for f in findings if f.level == "error"]
+    assert errs and "KeyboardOnly" in "\n".join(errs[0].remedy)
+
+
+def test_log_volume_alone_fires_without_a_readable_kernel_log():
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": False},
+        kernel_smp_errors=None,                 # journal unreadable
+        log={"discover_failures": 12, "connected_recently": False},
+    ))
+    assert [f for f in findings if f.level == "error"]
+
+
+def test_a_flapping_link_never_claims_health():
+    findings = doctor.diagnose(_facts(
+        device={"connected": False},
+        log={"discover_failures": 5, "connected_recently": False},
+    ))
+    assert any(f.level == "warn" for f in findings)
+    assert not any(f.level == "ok" for f in findings), \
+        "a flapping link is not 'everything looks healthy'"
+
+
+def test_an_unreachable_stick_is_reported_not_called_healthy():
+    # Stick off / flat / out of range: BlueZ keeps the paired record forever, so
+    # known=True and connected=False with "was not found" in the log. This used to
+    # produce NO finding at all and print "healthy, not connected".
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": False},
+        log={"not_found": 20, "discover_failures": 0, "connected_recently": False},
+    ))
+    assert any(f.level in ("warn", "error") for f in findings)
+    assert not any(f.level == "ok" for f in findings)
+
+
+def test_a_couldnt_check_warning_suppresses_the_health_summary():
+    # If we could not look, we must not say "everything looks healthy".
+    findings = doctor.diagnose(_facts(have_bluetoothctl=False))
+    assert not any(f.level == "ok" for f in findings)
+
+
+def test_bond_min_failures_is_pinned():
+    # The reviewer showed BOND_MIN_FAILURES could be mutated to 999 and all 22
+    # tests still passed. Pin the value AND pin a behavior that only holds at 3:
+    # 4 discover_failures + the SMP fingerprint must catch the bond early, before
+    # BOND_FAILURES_ALONE (10) would catch it on volume alone.
+    assert doctor.BOND_MIN_FAILURES == 3
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": False},
+        kernel_smp_errors=1,
+        log={"discover_failures": 3, "connected_recently": False},
+    ))
+    errs = [f for f in findings if f.level == "error"]
+    assert errs and "KeyboardOnly" in "\n".join(errs[0].remedy)
+
+
+def test_bond_failures_alone_is_pinned():
+    # The reviewer showed BOND_FAILURES_ALONE could be mutated to 999 and all 22
+    # tests still passed. Pin the value AND pin the behavior: log volume alone
+    # (no kernel corroboration) must still catch it at exactly this threshold.
+    assert doctor.BOND_FAILURES_ALONE == 10
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": False},
+        kernel_smp_errors=None,
+        log={"discover_failures": 10, "connected_recently": False},
+    ))
+    errs = [f for f in findings if f.level == "error"]
+    assert errs and "KeyboardOnly" in "\n".join(errs[0].remedy)
+
+
+def test_blocks_health_gate_is_not_bypassable_by_deleting_the_check():
+    # The reviewer showed that deleting `or f.blocks_health` from the health
+    # gate passed all 22 tests -- because no warn set blocks_health except the
+    # benign pairable one. `connected` is True here (not False) so the
+    # separate "never claim health while disconnected" guard can't be what
+    # saves this test -- only `blocks_health` on the flapping warn can.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        log={"discover_failures": 5, "not_found": 0, "connected_recently": False},
+    ))
+    assert [f for f in findings if f.level == "error"] == []
+    warns = [f for f in findings if f.level == "warn"]
+    assert warns and any(f.blocks_health for f in warns), \
+        "the flapping warn must set blocks_health"
+    assert not any(f.level == "ok" for f in findings)
