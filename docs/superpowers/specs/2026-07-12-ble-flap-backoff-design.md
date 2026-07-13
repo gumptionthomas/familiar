@@ -76,6 +76,49 @@ keeps the remedy available forever while stopping the every-90s hammering.
 `max_backoff` stays at **30s** (user's explicit choice). Steady state while away is 2
 connect attempts/minute, down from ~20. Worst-case reconnect latency on return is 30s.
 
+### 4. Diagnose before clearing, and log what is actually wrong
+
+**Motivating incident (2026-07-12).** The M5 silently lost its side of the pairing bond
+while the laptop kept its own. Every connect then went: link up → M5 sends
+`SMP: Security Request` → laptop answers `Pairing Failed: Pairing not supported` → M5
+terminates the link (`Reason: Remote User Terminated (0x13)`). Bleak surfaced only
+`failed to discover services, device disconnected`, which describes the *aftermath* and
+names none of that. Diagnosis required `btmon` and root. Meanwhile the phantom-clear fired
+~280 times against a condition it fundamentally cannot repair.
+
+Two lessons, both cheap to encode:
+
+**(a) An unpaired device is not a phantom.** `bluetoothctl disconnect` clears a stale
+*link*; it cannot restore *keys*. Before clearing, check whether the device is still
+paired. If it is not, skip the clear entirely — it is pure radio noise — and log the
+actual remedy instead.
+
+**(b) Log the diagnosable state, not a reason code we cannot obtain.** Bleak raises a
+generic error and does not expose the HCI disconnect reason, so this spec does **not**
+promise one. What it logs instead is the state that *explains* the failure, gathered from
+`bluetoothctl` (same best-effort subprocess pattern as `_bluetoothctl_disconnect`):
+
+```
+[familiar] 3 consecutive failures — adapter: powered=yes pairable=no |
+           device F0:16:1D:03:4C:FA: paired=no bonded=no trusted=no
+[familiar] the M5 is NOT paired. Its firmware requires LE Secure Connections + MITM
+           (see src/ble_bridge.cpp), so pairing needs a 6-digit passkey typed by a human
+           and CANNOT be repaired by this daemon. In a terminal:
+             bluetoothctl
+             agent KeyboardOnly / default-agent / scan on
+             pair F0:16:1D:03:4C:FA     (type the code shown on the stick)
+             trust F0:16:1D:03:4C:FA
+[familiar] skipping the stale-link clear: an unpaired device is not a phantom.
+```
+
+This runs on the existing trigger (`phantom_after` consecutive failures) and obeys the
+same `PHANTOM_MIN_INTERVAL` rate limit, so it cannot become a new source of log spam.
+
+The passkey requirement is the crux: because pairing is `ESP_LE_AUTH_REQ_SC_MITM_BOND`
+with the stick as DisplayOnly, **no headless agent can ever complete it**. The daemon's
+correct behavior is therefore to detect the condition, stop hammering, and tell the human
+exactly what to do — not to keep retrying forever.
+
 ## Constants
 
 | Name | Value | Meaning |
@@ -89,12 +132,21 @@ connect attempts/minute, down from ~20. Worst-case reconnect latency on return i
 
 - `_ble_session(bridge, on_connect, owner, connect, address, clock=time.monotonic) -> float`
   Returns seconds the link was up. The `on_connected` parameter is **removed**.
+- `_link_state(address) -> dict` — **new.** Best-effort `bluetoothctl show` / `info`
+  scrape returning `{"powered", "pairable", "paired", "bonded", "trusted"}` as bools, with
+  `None` for any field it could not determine (missing binary, parse failure). Never
+  raises; a fully-unknown result must not change behavior.
 - `_ble_link_loop(cfg, bridge, on_connect, connector=None, disconnect=None,
-  phantom_after=3, clock=time.monotonic, sleep=asyncio.sleep)`
-  Gains `clock` and `sleep` injection.
+  phantom_after=3, clock=time.monotonic, sleep=asyncio.sleep, link_state=_link_state)`
+  Gains `clock`, `sleep`, and `link_state` injection.
 
-`clock` and `sleep` are injected purely for testability; the production defaults preserve
-current behavior exactly.
+`clock`, `sleep`, and `link_state` are injected purely for testability; the production
+defaults preserve current behavior exactly.
+
+**Fallback rule:** if `_link_state` cannot determine `paired` (returns `None`), the loop
+falls back to today's behavior and *does* issue the phantom-clear. Only a confident
+`paired=False` suppresses it. An unknown state must never make us less capable of
+self-healing than we are today.
 
 ## Error handling
 
@@ -121,6 +173,15 @@ New tests, using an injected fake clock and a sleep-recorder so no real time pas
 3. **`test_phantom_clear_rate_limited`** — with continuous failures, assert clears are
    spaced at least `PHANTOM_MIN_INTERVAL` apart on the fake clock (i.e. not once per 3
    failures).
+4. **`test_no_phantom_clear_when_unpaired`** — with `link_state` reporting `paired=False`,
+   the loop must issue **zero** `bluetoothctl disconnect` calls, however many failures
+   accumulate. This is the 2026-07-12 incident, encoded.
+5. **`test_unpaired_logs_repair_instructions`** — the same condition must emit the
+   passkey/`KeyboardOnly` remedy text, so the next person sees the fix in
+   `journalctl` rather than needing an HCI trace.
+6. **`test_unknown_link_state_still_clears`** — with `link_state` returning `paired=None`
+   (e.g. `bluetoothctl` absent), the phantom-clear still fires as it does today. Proves the
+   diagnostic is strictly additive and can't regress self-healing.
 
 ## Verification (hardware)
 
@@ -135,3 +196,8 @@ Returning to the desk must reconnect within ~30s.
   are trying to avoid).
 - Any change to the Tidbyt path, the haiku path, or the firmware.
 - Reducing the per-attempt log line volume (2/min is acceptable and useful).
+- **Surfacing the HCI disconnect reason code** (`0x13`, SMP failure, …). Bleak does not
+  expose it; obtaining it requires `btmon` and root. Section 4 logs the pairing *state*
+  instead, which is what actually explains these failures.
+- **Automatic re-pairing.** The firmware requires a human-typed passkey by design; a daemon
+  cannot and should not attempt to work around MITM protection.
