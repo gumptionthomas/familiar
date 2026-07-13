@@ -7,7 +7,8 @@ def _facts(**over):
     base = {
         "config": {"parsed": True, "mode": "ble", "address": "AA:BB:CC:DD:EE:FF",
                    "haiku": True, "tidbyt": False},
-        "service": {"installed": True, "active": True, "manual_procs": 0},
+        "service": {"installed": True, "active": True, "manual_procs": 0,
+                    "manual_pids": []},
         "have_bluetoothctl": True,
         "adapter": {"powered": True, "pairable": True},
         "device": {"known": True, "paired": True, "bonded": True,
@@ -172,7 +173,8 @@ def test_collect_parses_bluetoothctl_and_the_log(monkeypatch):
         if cmd[0] == "systemctl":
             return "active\n"
         if cmd[0] == "journalctl" and "-k" in cmd:
-            return "unexpected SMP command 0x0b from f0:16\n" * 3
+            # our configured MAC, lowercase as the kernel prints it
+            return "unexpected SMP command 0x0b from f0:16:1d:03:4c:fa\n" * 3
         if cmd[0] == "journalctl":
             return ("[familiar] disconnected: failed to discover services\n" * 5 +
                     "[familiar] clearing a possible stale link to AA:BB\n")
@@ -181,7 +183,7 @@ def test_collect_parses_bluetoothctl_and_the_log(monkeypatch):
         raise AssertionError(f"unexpected command: {cmd}")
 
     monkeypatch.setattr(doctor, "_run", fake_run)
-    cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
+    cfg = Config(address="F0:16:1D:03:4C:FA", owner="", socket_path="/tmp/x.sock")
     facts = doctor.collect(cfg)
 
     assert facts["adapter"] == {"powered": True, "pairable": False}
@@ -210,6 +212,77 @@ def test_main_exits_0_when_healthy(monkeypatch, capsys):
     assert "healthy" in capsys.readouterr().out.lower()
 
 
+def test_a_healthy_connected_buddy_is_never_reported_as_broken():
+    # Pairable: no is the GNOME DEFAULT and only blocks NEW pairings -- an
+    # existing bond connects fine. A working buddy must not produce an error, and
+    # must still get its health summary. A diagnostic that cries wolf on a healthy
+    # machine destroys trust in every finding it makes.
+    findings = doctor.diagnose(_facts(adapter={"pairable": False}))
+    assert [f for f in findings if f.level == "error"] == []
+    assert any(f.level == "ok" for f in findings)
+
+
+def test_a_single_transient_failure_does_not_advise_a_hand_repair():
+    # A healthy long-lived link has NO "connected" line in the last 10 minutes --
+    # that is the steady state, not a fault. One blip while the daemon backs off
+    # must never send the user to stop the service and hand-pair with a passkey.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        log={"discover_failures": 1, "connected_recently": False},
+    ))
+    assert [f for f in findings if f.level == "error"] == []
+    assert "KeyboardOnly" not in "\n".join(
+        line for f in findings for line in f.remedy)
+
+
+def test_smp_errors_from_another_device_are_not_counted(monkeypatch):
+    # The kernel logs SMP errors for ANY peripheral. Counting a mouse's errors
+    # against our M5 would be a brand-new false positive.
+    def fake_run(cmd, **kw):
+        if cmd[0] == "bluetoothctl" and cmd[1] == "--version":
+            return "bluetoothctl: 5.66\n"
+        if cmd[0] == "journalctl" and "-k" in cmd:
+            return ("Bluetooth: hci0: unexpected SMP command 0x0b from "
+                    "aa:aa:aa:aa:aa:aa\n")          # NOT our MAC
+        return ""
+
+    monkeypatch.setattr(doctor, "_run", fake_run)
+    cfg = Config(address="F0:16:1D:03:4C:FA", owner="", socket_path="/tmp/x.sock")
+    assert doctor.collect(cfg)["kernel_smp_errors"] == 0
+
+
+def test_smp_errors_from_our_device_are_counted(monkeypatch):
+    def fake_run(cmd, **kw):
+        if cmd[0] == "bluetoothctl" and cmd[1] == "--version":
+            return "bluetoothctl: 5.66\n"
+        if cmd[0] == "journalctl" and "-k" in cmd:
+            return ("Bluetooth: hci0: unexpected SMP command 0x0b from "
+                    "f0:16:1d:03:4c:fa\n") * 3     # ours, lowercase in the kernel
+        return ""
+
+    monkeypatch.setattr(doctor, "_run", fake_run)
+    cfg = Config(address="F0:16:1D:03:4C:FA", owner="", socket_path="/tmp/x.sock")
+    assert doctor.collect(cfg)["kernel_smp_errors"] == 3
+
+
+def test_the_bond_diagnosis_still_fires_on_the_real_thing():
+    # The 2026-07-13 failure must STILL be caught after all this tightening.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": False},
+        kernel_smp_errors=3,
+        log={"discover_failures": 400, "connected_recently": False},
+    ))
+    errs = [f for f in findings if f.level == "error"]
+    assert errs and "KeyboardOnly" in "\n".join(errs[0].remedy)
+
+
+def test_the_two_instances_remedy_names_the_actual_pid():
+    findings = doctor.diagnose(_facts(
+        service={"active": True, "manual_procs": 1, "manual_pids": [99999]}))
+    errs = [f for f in findings if f.level == "error"]
+    assert errs and any("99999" in line for line in errs[0].remedy)
+
+
 def test_the_service_is_not_mistaken_for_a_manual_instance(monkeypatch):
     # The systemd unit's ExecStart IS `familiar run`, so a naive
     # `pgrep -f "familiar run"` matches the SERVICE ITSELF -- and doctor would
@@ -236,7 +309,7 @@ def test_the_service_is_not_mistaken_for_a_manual_instance(monkeypatch):
     cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
     facts = doctor.collect(cfg)
 
-    assert facts["manual_procs"] == 0, \
+    assert facts["service"]["manual_procs"] == 0, \
         "the service's own process must not be counted as a manual instance"
     assert not [f for f in doctor.diagnose(facts)
                 if f.level == "error" and "instance" in f.title.lower()]
@@ -266,6 +339,6 @@ def test_a_genuine_manual_instance_is_still_detected(monkeypatch):
     cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
     facts = doctor.collect(cfg)
 
-    assert facts["manual_procs"] == 1
+    assert facts["service"]["manual_procs"] == 1
     assert [f for f in doctor.diagnose(facts)
             if f.level == "error" and "instance" in f.title.lower()]

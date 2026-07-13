@@ -72,12 +72,15 @@ logic worth testing is isolated from the I/O that makes it untestable.
 {
   "config":  {"parsed": bool, "mode": "ble"|"tidbyt"|"none", "address": str|None,
               "haiku": bool, "tidbyt": bool},
-  "service": {"installed": bool|None, "active": bool|None, "manual_procs": int|None},
+  "service": {"installed": bool|None, "active": bool|None, "manual_procs": int|None,
+              "manual_pids": list[int]},   # the genuinely-manual PIDs (service's own excluded)
   "have_bluetoothctl": bool,
   "adapter": {"powered": bool|None, "pairable": bool|None},
   "device":  {"known": bool|None, "paired": bool|None, "bonded": bool|None,
               "trusted": bool|None, "connected": bool|None},
-  "kernel_smp_errors": int|None,      # `unexpected SMP command` lines, recent
+  "kernel_smp_errors": int|None,      # `unexpected SMP command` lines for OUR MAC, recent
+                                       # (the kernel logs this for ANY peripheral, so lines
+                                       # not naming our address don't count)
   "log": {"discover_failures": int|None,   # "failed to discover services"
           "not_found": int|None,           # "was not found"
           "phantom_clears": int|None,      # "clearing a possible stale link"
@@ -94,14 +97,28 @@ X"* honestly rather than guessing. Guessing is what cost us the day.
 
 ## The diagnoses
 
-Evaluated in order; the first matching cause wins, so the user gets one clear answer rather
-than a wall of symptoms.
+Evaluated in a fixed order, and EVERY matching cause is reported (not just the first) --
+findings that would otherwise be masked (e.g. the adapter being unpairable *and* a one-sided
+bond) both need to reach the user, since fixing only one leaves the other blocking. The order
+still matters for read sequence: prerequisite fixes (like adapter pairability) are listed
+before the fixes that depend on them.
 
 ### 1. One-sided bond — `error` (the 2026-07-13 failure)
 
-**Triggered by:** the device is not `paired`, **or** it is paired but the log shows repeated
-`failed to discover services` with no recent connect (optionally corroborated by
-`kernel_smp_errors > 0`).
+**Triggered by**, graded by confidence so a single transient blip can never trigger it (a
+healthy long-lived link has no `[familiar] connected` line in the last 10 minutes either —
+that is the normal steady state, not evidence of failure):
+
+- **Definitive** — `device.paired is False`. BlueZ has no keys; nothing else is needed.
+- **Strongly corroborated** — not connected, `discover_failures >= BOND_MIN_FAILURES` (3),
+  **and** `kernel_smp_errors > 0` for *our* MAC. The kernel SMP error is the fingerprint.
+- **Damning on log volume alone** — not connected and `discover_failures >= 10` (covers an
+  unreadable kernel log, where `kernel_smp_errors` is `None`).
+
+Below all three, but still failing and not connected, is reported as a `warn` ("the link is
+flapping") instead — the daemon retries with backoff and this often clears on its own. That
+warning never prints the re-pair recipe: sending someone to stop the service and hand-pair
+with a passkey on thin evidence is worse than saying nothing.
 
 **Why:** the M5 lost its pairing keys (it then advertises as pairable — its screen shows
 "discover") while BlueZ still holds its own. Every connect: link up → the M5 sends
@@ -128,13 +145,17 @@ systemctl --user start familiar
 Note it must be **one interactive session** — `bluetoothctl`'s one-shot form tears down
 discovery between invocations, so a later `pair` reports "Device not available".
 
-### 2. Adapter not pairable — `error`, and reported *before* any re-pair advice
+### 2. Adapter not pairable — `error` only when it actually blocks a fix, else `warn`
 
 **Triggered by:** `adapter.pairable is False`.
 
-**Why:** GNOME leaves `Pairable: no`, and an adapter power-cycle resets it. While it is `no`,
-BlueZ answers every pairing attempt with "Pairing not supported" — so a re-pair *cannot*
-succeed, no matter how correct the rest of the recipe is.
+**Why:** `Pairable: no` is the GNOME *default*, and it only blocks pairing a brand-new device —
+an existing bond connects fine. So this is a `warn` ("Bluetooth pairing is off (existing bonds
+still work)") unless the one-sided-bond finding (§1) is ALSO firing, in which case a re-pair is
+about to be advised and `Pairable: no` genuinely blocks it — GNOME leaves it off, an adapter
+power-cycle resets it, and while it is `no` BlueZ answers every pairing attempt with "Pairing
+not supported". It is then an `error`, and still reported **before** the bond finding, since
+the re-pair recipe cannot succeed until this is fixed first.
 
 **Remedy:** `bluetoothctl pairable on`
 
@@ -157,7 +178,10 @@ already seeing in the log.)
 alongside the service produces baffling, intermittent symptoms.
 
 **Remedy:** kill the manual process (by PID; **never `pkill -f familiar`** — the pattern
-matches its own shell and kills the caller).
+matches its own shell and kills the caller). `collect()` already knows which PIDs are the
+service's own (excluded) versus genuinely manual (`service.manual_pids`), so the remedy names
+the actual PID to kill — never the service's own, and never a placeholder the user has to
+disambiguate by hand.
 
 ### 5. Service not running — `error`
 

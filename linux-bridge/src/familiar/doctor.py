@@ -13,7 +13,6 @@ diagnose() is PURE: facts in, findings out, no I/O. That is what makes every
 scenario -- including the 2026-07-13 failure -- testable without hardware.
 """
 import os
-import re
 import subprocess
 from dataclasses import dataclass, field
 
@@ -26,6 +25,18 @@ class Finding:
     title: str
     why: str
     remedy: list[str] = field(default_factory=list)
+    # True only for a "couldn't check / couldn't determine" warning. A warn
+    # about a KNOWN state (e.g. pairable=no) must NOT block the health
+    # summary -- only genuine gaps in what we could check should.
+    blocks_health: bool = False
+
+
+# Minimum `failed to discover services` count, with no recent connect, that
+# counts as corroborating evidence for a one-sided bond WHEN the kernel log
+# also shows SMP errors for our MAC. (A much higher count, with no kernel
+# corroboration at all, is damning on its own -- see _BOND_MIN_FAILURES_ALONE.)
+BOND_MIN_FAILURES = 3
+_BOND_MIN_FAILURES_ALONE = 10
 
 
 _REPAIR = [
@@ -81,19 +92,28 @@ def diagnose(facts: dict) -> list[Finding]:
         out.append(Finding(
             "warn", "Could not check the service",
             "systemctl did not answer. If you run the daemon by hand, this is "
-            "expected.", []))
+            "expected.", [], blocks_health=True))
 
     if svc.get("active") and (svc.get("manual_procs") or 0) > 0:
+        pids = svc.get("manual_pids") or []
+        if pids:
+            kill_lines = [f"kill {pid}" for pid in pids]
+        else:
+            # We know a manual instance exists but couldn't pin its PID down
+            # (e.g. pgrep failed after the count was taken) -- fall back to
+            # the manual recipe rather than guessing a PID.
+            kill_lines = ["pgrep -af 'familiar run'   # exclude the service's "
+                          "own PID (systemctl --user show familiar.service "
+                          "-p MainPID)",
+                          "kill <PID>"]
         out.append(Finding(
             "error", "Two instances are running",
             "A manual `familiar run` is up alongside the service. Only ONE BLE "
             "connection to the stick is possible at a time, so the two fight and "
             "the symptoms look random.",
-            ["# find it, then kill it BY PID:",
-             "pgrep -af 'familiar run'",
-             "kill <PID>",
-             "# do not kill-by-name-match here — the pattern would also match",
-             "# the shell running this very command"]))
+            ["# kill the manual instance(s) below -- NEVER the service's own "
+             "PID, and never kill-by-name-match (it would also match the "
+             "shell running this very command):"] + kill_lines))
 
     # --- BLE (only when an M5 is actually configured) ------------------------
     if cfg.get("mode") == "ble" and addr:
@@ -101,52 +121,90 @@ def diagnose(facts: dict) -> list[Finding]:
             out.append(Finding(
                 "warn", "Could not check Bluetooth",
                 "bluetoothctl is not installed, so the pairing and adapter "
-                "checks were skipped.", []))
+                "checks were skipped.", [], blocks_health=True))
         else:
-            # The adapter first: a re-pair CANNOT work while it is not pairable,
-            # so telling the user to re-pair before this is fixed sends them into
-            # a loop that cannot terminate.
+            connected = dev.get("connected")
+            recently = log.get("connected_recently")
+            not_found = log.get("not_found") or 0
+            discover_fails = log.get("discover_failures") or 0
+            smp = facts.get("kernel_smp_errors") or 0
+
+            # Grade the one-sided-bond evidence by confidence BEFORE deciding
+            # anything else -- a currently connected link can't simultaneously
+            # be a one-sided bond, and the pairable finding below needs to
+            # know whether a re-pair is actually about to be advised.
+            phantom_fires = (connected is True and recently is False
+                              and not_found > 0)
+            bond_fires = (not phantom_fires) and (
+                dev.get("paired") is False                       # definitive
+                or (connected is not True
+                    and discover_fails >= BOND_MIN_FAILURES and smp > 0)
+                or (connected is not True
+                    and discover_fails >= _BOND_MIN_FAILURES_ALONE))
+
+            # The adapter first: a re-pair CANNOT work while it is not
+            # pairable, so telling the user to re-pair before this is fixed
+            # sends them into a loop that cannot terminate. But Pairable: no
+            # is the GNOME DEFAULT and only blocks pairing a NEW device --
+            # an existing bond connects fine, so it is only an error when a
+            # re-pair is actually being advised.
             if adapter.get("powered") is False:
                 out.append(Finding(
                     "error", "The Bluetooth adapter is powered off",
                     "Nothing can connect until it is on.",
                     ["bluetoothctl power on"]))
             if adapter.get("pairable") is False:
-                out.append(Finding(
-                    "error", "The adapter is not pairable",
-                    "BlueZ answers every pairing attempt with 'Pairing not "
-                    "supported' while Pairable is no. GNOME leaves it off, and an "
-                    "adapter power-cycle resets it. No re-pair can succeed until "
-                    "this is fixed.",
-                    ["bluetoothctl pairable on"]))
+                if bond_fires:
+                    out.append(Finding(
+                        "error", "The adapter is not pairable",
+                        "BlueZ answers every pairing attempt with 'Pairing "
+                        "not supported' while Pairable is no. GNOME leaves it "
+                        "off, and an adapter power-cycle resets it. No "
+                        "re-pair can succeed until this is fixed first.",
+                        ["bluetoothctl pairable on"]))
+                else:
+                    out.append(Finding(
+                        "warn", "Bluetooth pairing is off (existing bonds "
+                        "still work)",
+                        "Pairable: no is the GNOME default. It only blocks "
+                        "pairing a brand-new device -- an already-paired "
+                        "stick like this one connects fine. Only turn this "
+                        "on if you need to pair a new device.",
+                        ["bluetoothctl pairable on"]))
 
-            connected = dev.get("connected")
-            recently = log.get("connected_recently")
-            not_found = log.get("not_found") or 0
-            discover_fails = log.get("discover_failures") or 0
-
-            # Phantom: BlueZ holds a link the daemon cannot use.
-            if connected is True and recently is False and not_found > 0:
+            if phantom_fires:
                 out.append(Finding(
                     "error", "Phantom link",
-                    "BlueZ reports the stick as connected, but the daemon cannot "
-                    "find it — a connected peripheral stops advertising. Something "
-                    "left a stale link behind.",
+                    "BlueZ reports the stick as connected, but the daemon "
+                    "cannot find it — a connected peripheral stops "
+                    "advertising. Something left a stale link behind.",
                     [f"bluetoothctl disconnect {addr}"]))
 
-            # One-sided bond: the M5 lost its keys, we kept ours.
-            elif dev.get("paired") is False or (
-                    discover_fails > 0 and recently is False):
+            elif bond_fires:
                 out.append(Finding(
                     "error", "The M5 is not paired (a one-sided bond)",
                     "The stick has lost its pairing keys (its screen shows "
-                    "'discover') while BlueZ still holds its own. Every connect "
-                    "then goes: link up -> the M5 demands encryption -> BlueZ "
-                    "answers 'Pairing not supported' -> the M5 hangs up. "
-                    "`bluetoothctl disconnect` CANNOT help: it clears a stale "
-                    "link, not stale keys. This needs a human — the firmware "
-                    "requires a 6-digit passkey typed off the stick.",
+                    "'discover') while BlueZ still holds its own. Every "
+                    "connect then goes: link up -> the M5 demands encryption "
+                    "-> BlueZ answers 'Pairing not supported' -> the M5 hangs "
+                    "up. `bluetoothctl disconnect` CANNOT help: it clears a "
+                    "stale link, not stale keys. This needs a human — the "
+                    "firmware requires a 6-digit passkey typed off the "
+                    "stick.",
                     _repair_steps(addr)))
+
+            # Below the bond thresholds, but still failing and not connected:
+            # this is the daemon's normal backoff-and-retry, not evidence of
+            # a broken bond. Never send someone to hand-pair on thin evidence
+            # -- a healthy long-lived link has NO "connected" line in the
+            # last 10 minutes either, since that is the steady state.
+            elif connected is not True and discover_fails > 0:
+                out.append(Finding(
+                    "warn", "The link is flapping",
+                    f"{discover_fails} recent 'failed to discover services' "
+                    "with no confirmed reconnect yet. The daemon retries "
+                    "with backoff, and this often clears on its own. "
+                    "Re-run `familiar doctor` if it persists.", []))
 
             elif dev.get("known") is False:
                 out.append(Finding(
@@ -158,13 +216,15 @@ def diagnose(facts: dict) -> list[Finding]:
             elif connected is None:
                 out.append(Finding(
                     "warn", "Could not check the link",
-                    "bluetoothctl did not answer for this device.", []))
+                    "bluetoothctl did not answer for this device.", [],
+                    blocks_health=True))
 
-    # Only claim health if we actually managed to CHECK. If some checks could
-    # not run, the warnings above stand on their own -- announcing "everything
-    # looks healthy" when we could not look is exactly the false confidence this
-    # tool exists to prevent.
-    if any(f.level in ("error", "warn") for f in out):
+    # Only claim health if we actually managed to CHECK. A warn about a KNOWN
+    # state (e.g. pairable=no) is informative, not a gap -- it must not
+    # suppress the summary. But a warn meaning "couldn't check" must: claiming
+    # "everything looks healthy" when we could not look is exactly the false
+    # confidence this tool exists to prevent.
+    if any(f.level == "error" or f.blocks_health for f in out):
         return out
 
     bits = [f"mode={cfg.get('mode')}"]
@@ -178,8 +238,15 @@ def diagnose(facts: dict) -> list[Finding]:
     return out
 
 
-def _run(cmd, timeout=10) -> str:
-    """Run a command, return stdout. Raises on any failure — callers catch."""
+def _run(cmd, timeout=5) -> str:
+    """Run a command and return its stdout (possibly empty).
+
+    Uses `check=False`, so a non-zero exit does NOT raise -- callers that
+    care about the return code (e.g. the unknown-MAC path, which relies on
+    rc=1 with populated stdout) must inspect stdout themselves. This can
+    still raise for other reasons (command not found, timeout); callers
+    that want a fully best-effort call should wrap it in `_try`.
+    """
     return subprocess.run(cmd, capture_output=True, text=True,
                           timeout=timeout, check=False).stdout
 
@@ -204,20 +271,23 @@ def _service_main_pid():
     return pid or None
 
 
-def _manual_daemon_count(service_main_pid) -> int:
-    """Count `familiar run` processes that are NOT the service itself.
+def _manual_daemon_pids(service_main_pid) -> list[int]:
+    """PIDs of `familiar run` processes that are NOT the service itself.
 
     The systemd unit's ExecStart IS `familiar run`, so pgrep matches the
     service's own process too. Exclude it (by PID, not name -- a name match
     can't tell service and manual apart), and exclude this process and its
-    parent so `familiar doctor` never counts itself.
+    parent so `familiar doctor` never counts itself. Returning the actual
+    PIDs (not just a count) lets the remedy name the process to kill instead
+    of sending the user to `pgrep` themselves, where the service's own PID
+    is indistinguishable from a real second instance.
     """
     pids = [l.strip() for l in _run(["pgrep", "-f", "familiar run"]).splitlines()
             if l.strip()]
     exclude = {str(os.getpid()), str(os.getppid())}
     if service_main_pid:
         exclude.add(str(service_main_pid))
-    return len([p for p in pids if p not in exclude])
+    return [int(p) for p in pids if p not in exclude]
 
 
 def _yesno(text, field):
@@ -263,11 +333,22 @@ def collect(cfg) -> dict:
     # that PID so we can exclude it -- otherwise doctor reports "Two
     # instances are running" to every user, every time the service is up.
     service_main_pid = _try(_service_main_pid)
-    manual = _try(lambda: _manual_daemon_count(service_main_pid))
+    manual_pids = _try(lambda: _manual_daemon_pids(service_main_pid))
+    manual = len(manual_pids) if manual_pids is not None else None
 
+    # The kernel logs SMP errors for ANY BLE peripheral (a mouse, a headset),
+    # so counting them unfiltered would be a brand-new false positive. Count
+    # only lines naming OUR device's MAC -- the kernel prints it lowercase,
+    # the config stores it uppercase, so compare case-insensitively.
     kern = _try(lambda: _run(
         ["journalctl", "-k", "--since", "-10min", "--no-pager"]), "") or ""
-    smp = len(re.findall(r"unexpected SMP command", kern)) if kern else None
+    addr_lower = (cfg.address or "").lower()
+    if not kern or not addr_lower:
+        smp = None
+    else:
+        smp = sum(1 for line in kern.splitlines()
+                  if "unexpected SMP command" in line
+                  and addr_lower in line.lower())
 
     jlog = _try(lambda: _run(
         ["journalctl", "--user", "-u", "familiar.service",
@@ -290,8 +371,8 @@ def collect(cfg) -> dict:
                    "haiku": bool(cfg.api_key),
                    "tidbyt": bool(cfg.tidbyt_device_id and cfg.tidbyt_api_key)},
         "service": {"installed": installed, "active": active,
-                    "manual_procs": manual},
-        "manual_procs": manual,
+                    "manual_procs": manual,
+                    "manual_pids": manual_pids or []},
         "have_bluetoothctl": have_btctl,
         "adapter": adapter,
         "device": device,
