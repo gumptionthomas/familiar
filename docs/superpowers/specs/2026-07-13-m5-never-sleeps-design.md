@@ -56,38 +56,111 @@ was the cause.
 
 ## Design
 
-### 1. Compare the lines to the lines
+### 1. Extract the change detection into a pure, host-testable unit
 
-Replace the `msg` proxy in `src/data.h` with a direct comparison, done in place as each
-entry is copied in. No temp buffer, no heap:
+The buggy logic is a function of data alone — "given the stored lines and an incoming
+`entries` array, did the feed change?" — but it currently sits inside `data.h`, which
+includes `<Arduino.h>` and calls `millis()`, `M5.Rtc.SetTime()`, and into `ble_bridge.h` /
+`xfer.h`. That entanglement is the only reason it can't be tested.
+
+New file **`src/feed.h`** — no Arduino, no M5, no I/O. ArduinoJson compiles natively, so
+this is host-compilable:
 
 ```c
-JsonArray la = doc["entries"];
-if (!la.isNull()) {
+#pragma once
+// Pure feed-line state: no Arduino, no M5, no I/O, so the change detection can
+// be unit-tested on the host (test/test_feed).
+#include <stdint.h>
+#include <string.h>
+#include <ArduinoJson.h>
+
+#define FEED_MAX_LINES 8
+#define FEED_LINE_CAP  92          // 91 chars + NUL
+
+// Copy `entries` into `lines`; return true if the feed actually CHANGED (the
+// count differs, or any line differs). The caller bumps lineGen on true.
+//
+// Do NOT reintroduce the old shortcut of comparing lines[n-1] against `msg`.
+// `msg` is a short *status* field (REFERENCE.md) truncated to 23 chars, so any
+// line longer than that mismatched on EVERY heartbeat -- lineGen ticked forever,
+// which woke the screen every 10s and stopped the buddy ever reaching clock mode.
+inline bool feedApplyEntries(char lines[FEED_MAX_LINES][FEED_LINE_CAP],
+                             uint8_t* nLines, JsonArrayConst la) {
   uint8_t n = 0;
   bool changed = false;
-  for (JsonVariant v : la) {
-    if (n >= 8) break;
+  for (JsonVariantConst v : la) {
+    if (n >= FEED_MAX_LINES) break;
     const char* s = v.as<const char*>();
     if (!s) s = "";
-    if (strncmp(out->lines[n], s, 91) != 0) changed = true;
-    strncpy(out->lines[n], s, 91); out->lines[n][91] = 0;
+    if (strncmp(lines[n], s, FEED_LINE_CAP - 1) != 0) changed = true;
+    strncpy(lines[n], s, FEED_LINE_CAP - 1);
+    lines[n][FEED_LINE_CAP - 1] = 0;
     n++;
   }
-  if (n != out->nLines) changed = true;
-  out->nLines = n;
-  if (changed) out->lineGen++;
+  if (n != *nLines) changed = true;
+  *nLines = n;
+  return changed;
 }
 ```
 
-`lineGen` now means what its comment (`data.h:18`) always claimed: *"bumps when lines
-change."*
+`src/data.h` then reduces to a call, and `lineGen` finally means what its comment
+(`data.h:18`) always claimed — *"bumps when lines change"*:
 
-Note the comparison is `strncmp(..., 91)` — the same bound used for the copy — so a line is
-compared over exactly the range that is stored. Lines beyond `n` are left stale in the
-array but are unreachable, guarded by `nLines`, exactly as today.
+```c
+JsonArrayConst la = doc["entries"];
+if (!la.isNull()) {
+  if (feedApplyEntries(out->lines, &out->nLines, la)) out->lineGen++;
+}
+```
 
-### 2. Relabel the AXP192 temperature
+The comparison bound (`FEED_LINE_CAP - 1`) is the same bound used for the copy, so a line is
+compared over exactly the range that is stored. Lines beyond `n` are left stale in the array
+but are unreachable, guarded by `nLines`, exactly as today.
+
+### 2. A native C++ test harness
+
+This is the first automated firmware test in the project. It exists because this bug class —
+pure state logic, no hardware — is precisely what on-device eyeballing keeps missing, and
+what a host test catches instantly. There is direct precedent: the same calendar-mood
+precedence, once ported to Python for the Tidbyt, had its midnight-vs-TGIF ordering bug
+caught immediately by unit tests.
+
+**`platformio.ini`** gains a native environment. `build_src_filter = -<*>` keeps it from
+trying to compile the Arduino firmware; only the test file and ArduinoJson are built:
+
+```ini
+[env:native]
+platform = native
+test_framework = unity
+build_flags = -std=gnu++17
+build_src_filter = -<*>        ; don't compile the Arduino firmware natively
+lib_compat_mode = off          ; ArduinoJson is header-only; allow the native platform
+lib_deps =
+    bblanchon/ArduinoJson @ ^7.0.0
+```
+
+**`test/test_feed/test_feed.cpp`** — Unity tests over `feedApplyEntries`, including the
+regression that names this bug:
+
+- first apply of N lines → **changed**, `nLines == N`
+- identical re-apply → **not changed** ← the core fix
+- identical re-apply of a line **longer than 23 characters** → **not changed** ← *the
+  regression*: this is the exact case the `msg` proxy got wrong, and it fails against the
+  old code
+- one line differs → **changed**
+- line count differs → **changed**
+- more than `FEED_MAX_LINES` entries → capped at 8, no overflow
+- a null array element → coerced to `""`, no crash
+
+**CI** gains a `firmware tests (native)` job running `pio test -e native`, alongside the
+existing bridge job. Pin the action SHAs, matching the existing workflow's convention.
+
+**What this does NOT cover, stated plainly:** rendering, I²C, BLE, timing, and everything
+else in `main.cpp` that touches hardware. Those still require the stick and human eyes. This
+harness buys regression safety on parsing and pure state logic only. It is not a substitute
+for the hardware verification below.
+
+### 3. Relabel the AXP192 temperature
 
 `main.cpp:645` prints the AXP192 power-management chip's die temperature as `temp %dC` on
 the DEVICE info page. Two info pages one button-press apart now each show a line labelled
@@ -98,7 +171,7 @@ Change it to `cpu %dC`.
 
 ## Scope
 
-**Firmware only.** The bridge is not changed.
+**Firmware + firmware test infrastructure.** The bridge is not changed.
 
 The daemon setting `msg = entries[-1]` *is* a deviation from the documented protocol
 (`msg` should be a short status). It is deliberately left alone:
@@ -117,10 +190,13 @@ No new failure modes. A null or absent `entries` array leaves the block untouche
 A null string element is coerced to `""` (as today). `n` is still capped at 8, the array
 bound.
 
-## Verification (hardware — no automated tests)
+## Verification
 
-There is no C++ test harness in this repo; the bridge's pytest suite does not cover
-firmware. Verification is on-device:
+**Automated (new):** `pio test -e native` — the Unity tests above. `test_long_line_reapply`
+must FAIL against the old `msg`-proxy code and PASS after the fix; that is the proof the
+test has teeth. Runs in CI on every PR.
+
+**On-device (still required — the automated tests reach none of this):**
 
 1. `pio run` builds clean; flash over `/dev/ttyUSB0`.
 2. **The bug, reproduced then fixed:** with a haiku loaded (so `entries` is non-empty with a
