@@ -139,3 +139,75 @@ def test_stats_group_by_prompt_version():
     assert st["by_prompt"]["v2"]["count"] == 1
     v1 = dict((w, share) for w, _n, share in st["by_prompt"]["v1"]["imagery"])
     assert v1["quiet"] == pytest.approx(1.0)      # both v1 haikus -> 100%
+
+
+import asyncio
+
+from familiar import daemon
+from familiar.config import Config
+
+
+def test_compose_archives_a_successful_haiku(tmp_path, monkeypatch):
+    async def fake_compose(digest, *, api_key, model, **kw):
+        return ["one", "two", "three"]
+
+    monkeypatch.setattr(haiku, "compose", fake_compose)
+    written = []
+    cfg = Config(api_key="k", model="m1", haiku_archive=True)
+    compose = daemon._make_compose(
+        cfg, append=lambda lines, **kw: written.append((lines, kw)))
+
+    lines = asyncio.run(compose("some digest"))
+    assert lines == ["one", "two", "three"]
+    assert len(written) == 1
+    got_lines, kw = written[0]
+    assert got_lines == ["one", "two", "three"]
+    assert kw["model"] == "m1"
+    assert kw["prompt"] == archive.prompt_id(haiku.SYSTEM)
+
+
+def test_compose_archives_nothing_when_the_haiku_fails(tmp_path, monkeypatch):
+    async def fake_compose(digest, *, api_key, model, **kw):
+        return None                       # API down / unparseable
+
+    monkeypatch.setattr(haiku, "compose", fake_compose)
+    written = []
+    cfg = Config(api_key="k", model="m1", haiku_archive=True)
+    compose = daemon._make_compose(cfg, append=lambda *a, **kw: written.append(a))
+    assert asyncio.run(compose("d")) is None
+    assert written == []
+
+
+def test_compose_archives_nothing_when_disabled(monkeypatch):
+    async def fake_compose(digest, *, api_key, model, **kw):
+        return ["one", "two", "three"]
+
+    monkeypatch.setattr(haiku, "compose", fake_compose)
+    written = []
+    cfg = Config(api_key="k", model="m1", haiku_archive=False)
+    compose = daemon._make_compose(cfg, append=lambda *a, **kw: written.append(a))
+    assert asyncio.run(compose("d")) == ["one", "two", "three"]
+    assert written == []                  # opted out
+
+
+def test_haikus_cli_lists_recent(tmp_path, capsys):
+    p = tmp_path / "h.jsonl"
+    archive.append(["alpha one", "beta two", "gamma"], model="m", prompt="p", path=p)
+    assert archive.main(["--path", str(p)]) == 0
+    out = capsys.readouterr().out
+    assert "alpha one" in out and "gamma" in out
+
+
+def test_haikus_cli_stats_reports_tropes(tmp_path, capsys):
+    p = tmp_path / "h.jsonl"
+    archive.append(["the cursor blinks", "a glowing screen", "dusk"],
+                   model="m", prompt="p", path=p)
+    assert archive.main(["--stats", "--path", str(p)]) == 0
+    out = capsys.readouterr().out.lower()
+    assert "cursor" in out
+    assert "trope" in out
+
+
+def test_haikus_cli_on_an_empty_archive_is_friendly_not_an_error(tmp_path, capsys):
+    assert archive.main(["--path", str(tmp_path / "nope.jsonl")]) == 0
+    assert "no haikus" in capsys.readouterr().out.lower()

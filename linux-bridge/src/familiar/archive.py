@@ -9,6 +9,7 @@ WHY. Diagnosis stays a manual investigation.
 Best-effort throughout: a failed write is swallowed. The buddy must never break
 because a log file failed.
 """
+import argparse
 import hashlib
 import json
 import os
@@ -154,3 +155,71 @@ def stats(records) -> dict:
         "tropes": _doc_freq(records, vocabulary=set(TROPES)),
         "by_prompt": by_prompt,
     }
+
+
+def _fmt_share(n: int, share: float) -> str:
+    return f"{share * 100:4.0f}%  ({n})"
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(prog="familiar haikus")
+    ap.add_argument("--stats", action="store_true",
+                    help="show trends instead of the haikus themselves")
+    ap.add_argument("--limit", type=int, default=20,
+                    help="how many of the most recent haikus to use (default 20; "
+                         "with --stats, 0 means all)")
+    ap.add_argument("--path", default=str(DEFAULT_PATH),
+                    help=argparse.SUPPRESS)     # tests only
+    args = ap.parse_args(argv)
+
+    if not args.stats and args.limit == 0:
+        # --limit 0 means "all" ONLY together with --stats (see help text above).
+        # load()'s `limit=0` is falsy and would otherwise silently return the
+        # WHOLE archive here too -- the opposite of what "0 recent haikus" reads
+        # as without --stats. Treat it as "show none" instead of dumping.
+        return 0
+
+    limit = None if (args.stats and args.limit == 0) else args.limit
+    records = load(Path(args.path), limit=limit)
+    if not records:
+        print("no haikus archived yet — the buddy writes one each time it "
+              "composes (haiku mode must be on)")
+        return 0
+
+    if not args.stats:
+        for rec in records:
+            print(f"  {rec.get('ts', '')[:16].replace('T', ' ')}")
+            for line in rec.get("lines") or []:
+                print(f"    {line}")
+            print()
+        return 0
+
+    st = stats(records)
+    print(f"{st['count']} haikus, {len(st['by_prompt'])} prompt version(s)\n")
+
+    print("RECURRING IMAGERY (share of haikus containing the word)")
+    for w, n, share in st["imagery"][:10]:
+        print(f"  {w:<14}{_fmt_share(n, share)}")
+
+    print("\nREPEATED LINES")
+    if st["repeated"]:
+        for line, n in st["repeated"][:10]:
+            print(f"  {n}x  \"{line}\"")
+    else:
+        print("  (none — every line so far is unique)")
+
+    print("\nTROPE VIOLATIONS (imagery the system prompt bans)")
+    if st["tropes"]:
+        for w, n, share in st["tropes"]:
+            print(f"  {w:<14}{_fmt_share(n, share)}")
+    else:
+        print("  (none — the prompt is holding)")
+
+    if len(st["by_prompt"]) > 1:
+        print("\nBY PROMPT VERSION")
+        for pid, g in st["by_prompt"].items():
+            top = g["imagery"][0][0] if g["imagery"] else "-"
+            tropes = sum(n for _w, n, _s in g["tropes"])
+            print(f"  {pid}  {g['count']:>4} haikus   top: {top:<12} "
+                  f"trope hits: {tropes}")
+    return 0

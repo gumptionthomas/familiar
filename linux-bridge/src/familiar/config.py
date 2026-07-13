@@ -19,6 +19,7 @@ class Config:
     tidbyt_device_id: str = ""
     tidbyt_api_key: str = ""
     tidbyt_pet: str = "bufo"
+    haiku_archive: bool = True
 
 
 def _default_config_path() -> Path:
@@ -45,4 +46,7 @@ def load(path: Path | None = None) -> Config:
         # tidbyt_pet selects which buddy the Tidbyt shows: "bufo" (the GIF) or
         # an ASCII species name (e.g. "capybara"); unknown falls back to bufo.
         tidbyt_pet=data.get("tidbyt_pet") or "bufo",
+        # The archive writes composed haikus to $XDG_DATA_HOME/familiar/haikus.jsonl.
+        # Outputs only -- never the digest. Set false to opt out entirely.
+        haiku_archive=bool(data.get("haiku_archive", True)),
     )
