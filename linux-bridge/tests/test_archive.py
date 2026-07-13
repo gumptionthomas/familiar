@@ -29,6 +29,17 @@ def test_append_then_load_roundtrip(tmp_path):
     assert recs[0]["ts"].startswith("2026-07-13T11:42:03")
 
 
+def test_record_contains_only_the_four_allowed_fields(tmp_path):
+    # THE privacy constraint: outputs only. The digest contains the user's prompt
+    # and Claude's reply; none of it may ever reach this file. If you are adding a
+    # field and this test fails, that is the test doing its job -- go and re-read
+    # the design doc before changing it.
+    p = tmp_path / "haikus.jsonl"
+    archive.append(["a", "b", "c"], model="m", prompt="p", path=p)
+    rec = archive.load(p)[0]
+    assert set(rec.keys()) == {"ts", "lines", "model", "prompt"}
+
+
 def test_append_appends_rather_than_overwriting(tmp_path):
     p = tmp_path / "haikus.jsonl"
     archive.append(["a"], model="m", prompt="p", path=p)
@@ -211,3 +222,18 @@ def test_haikus_cli_stats_reports_tropes(tmp_path, capsys):
 def test_haikus_cli_on_an_empty_archive_is_friendly_not_an_error(tmp_path, capsys):
     assert archive.main(["--path", str(tmp_path / "nope.jsonl")]) == 0
     assert "no haikus" in capsys.readouterr().out.lower()
+
+
+def test_haikus_cli_limit_zero_means_all_in_both_modes(tmp_path, capsys):
+    # "limit 0" = no limit, in BOTH modes. The same flag value must never mean
+    # "none" in one mode and "all" in the other.
+    p = tmp_path / "h.jsonl"
+    for i in range(3):
+        archive.append([f"line {i}"], model="m", prompt="p", path=p)
+
+    assert archive.main(["--path", str(p), "--limit", "0"]) == 0
+    out = capsys.readouterr().out
+    assert "line 0" in out and "line 2" in out       # all three, not none
+
+    assert archive.main(["--path", str(p), "--stats", "--limit", "0"]) == 0
+    assert "3 haikus" in capsys.readouterr().out

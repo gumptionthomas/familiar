@@ -59,6 +59,10 @@ def append(lines, *, model: str, prompt: str,
 def load(path: Path = DEFAULT_PATH, limit: int | None = None) -> list[dict]:
     """Read the archive oldest-first. `limit` keeps the most recent N.
 
+    `limit=0` and `limit=None` both mean "no limit" -- this is intentional.
+    Do not "fix" `recs[-limit:] if limit else recs` below to special-case 0;
+    doing so would silently break the CLI's "0 = all" contract.
+
     A corrupt or truncated line (e.g. a power cut mid-write) is skipped, not
     fatal -- an append-only log a crash can render unreadable is a bad log.
     """
@@ -166,20 +170,13 @@ def main(argv=None) -> int:
     ap.add_argument("--stats", action="store_true",
                     help="show trends instead of the haikus themselves")
     ap.add_argument("--limit", type=int, default=20,
-                    help="how many of the most recent haikus to use (default 20; "
-                         "with --stats, 0 means all)")
+                    help="how many of the most recent haikus to use "
+                         "(default 20; 0 = all)")
     ap.add_argument("--path", default=str(DEFAULT_PATH),
                     help=argparse.SUPPRESS)     # tests only
     args = ap.parse_args(argv)
 
-    if not args.stats and args.limit == 0:
-        # --limit 0 means "all" ONLY together with --stats (see help text above).
-        # load()'s `limit=0` is falsy and would otherwise silently return the
-        # WHOLE archive here too -- the opposite of what "0 recent haikus" reads
-        # as without --stats. Treat it as "show none" instead of dumping.
-        return 0
-
-    limit = None if (args.stats and args.limit == 0) else args.limit
+    limit = None if args.limit == 0 else args.limit
     records = load(Path(args.path), limit=limit)
     if not records:
         print("no haikus archived yet — the buddy writes one each time it "
