@@ -25,6 +25,18 @@ def test_cli_dispatches_hook(monkeypatch):
     assert called["hook"] == ["familiar-hook", "stop"]   # hook.main reads argv[1:] as event
 
 
+def test_cli_dispatches_doctor(monkeypatch):
+    called = {}
+
+    def fake_doctor(argv):
+        called["doctor"] = argv
+        return 0
+
+    monkeypatch.setattr(cli.doctor, "main", fake_doctor)
+    assert cli.main(["doctor"]) == 0
+    assert called["doctor"] == []
+
+
 def test_cli_no_args_prints_help(capsys):
     assert cli.main([]) == 0
     assert "familiar" in capsys.readouterr().out.lower()

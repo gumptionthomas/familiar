@@ -132,6 +132,20 @@ The pet WebPs are pre-rendered and bundled with the package —
 This is the roughest part of the project to hand off: it renders and pushes from
 your own machine rather than being a one-click Tidbyt community app.
 
+## Something's wrong?
+
+```bash
+familiar doctor
+```
+
+It checks the config, the service, the Bluetooth adapter, the pairing bond, and
+the recent logs, then names the cause and prints the exact commands to fix it.
+It is read-only — it never changes anything. Exit code 0 = healthy, 1 = a problem
+was found.
+
+The cases below are what it detects; you shouldn't normally need to work through
+them by hand.
+
 ## Troubleshooting
 
 **`disconnected: Device with address ... was not found`, but `bluetoothctl
