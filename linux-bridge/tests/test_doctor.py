@@ -492,6 +492,7 @@ def test_every_unknown_fact_suppresses_the_health_claim():
     # The sweep: ANY relevant fact we could not determine must produce a
     # blocks_health warning, so the rule cannot be forgotten at a new site.
     for path in [("service", "active"), ("adapter", "pairable"),
+                 ("adapter", "powered"),
                  ("device", "connected"), ("device", "paired")]:
         section, key = path
         findings = doctor.diagnose(_facts(**{section: {key: None}}))
@@ -577,6 +578,18 @@ def test_only_one_warning_when_bluetoothctl_is_missing():
     warns = [f for f in findings if f.level == "warn"]
     assert len(warns) == 1
     assert not any(f.level == "ok" for f in findings)
+
+
+def test_an_unknown_mode_never_reads_as_healthy():
+    # `mode` gates the entire BLE block and the health summary. Read through a
+    # bare .get(), an absent or None mode printed "Everything looks healthy".
+    # collect() cannot produce that today -- but config.parsed sits in the facts
+    # unused, inviting exactly the future change that would resurrect it.
+    for facts in ({}, {"config": {"mode": None}}):
+        findings = doctor.diagnose(facts)
+        assert findings, "a diagnostic must never print nothing"
+        assert not any(f.level == "ok" for f in findings), \
+            "we do not know what this buddy is configured to drive"
 
 
 def test_unreachable_findings_blocks_health_flag_is_pinned():

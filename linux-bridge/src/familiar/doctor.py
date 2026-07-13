@@ -164,14 +164,19 @@ def diagnose(facts: dict) -> list[Finding]:
 def _diagnose(facts: dict) -> list[Finding]:
     out = []
     F = _Facts(facts)
-    # `config` is never unknown -- `main()` already refused to call `diagnose`
-    # at all if the config file itself could not be parsed (see `main`
-    # below), so every field here is a determined value, not a gap to sweep.
+    # `main()` already refuses to call `diagnose` at all if the config file
+    # itself could not be parsed (see `main` below) -- but `diagnose()` is
+    # also called directly (by tests, and by any future caller), so `mode`
+    # -- which gates the entire BLE block and the health summary below -- is
+    # read through `.need()` like any other decision-gating fact. `address`,
+    # `haiku`, and `tidbyt` stay bare reads: they only refine presentation,
+    # never decide whether a diagnosis fires.
     cfg = F.top("config") or {}
+    mode = F.need("config", "mode", "what the buddy is configured to drive")
     addr = cfg.get("address")
 
     # --- nothing configured -------------------------------------------------
-    if cfg.get("mode") == "none":
+    if mode == "none":
         out.append(Finding(
             "error", "Nothing is configured",
             "No M5 address and no Tidbyt keys, so the daemon has nothing to drive.",
@@ -231,7 +236,7 @@ def _diagnose(facts: dict) -> list[Finding]:
     # is what keeps a healthy Tidbyt-only setup from acquiring brand-new
     # false-positive warnings about facts that do not apply to it.
     connected = None
-    if cfg.get("mode") == "ble" and addr:
+    if mode == "ble" and addr:
         have_btctl = F.top("have_bluetoothctl", False)
         if not have_btctl:
             # Dedupe by cause: bluetoothctl itself is missing, so none of the
@@ -409,15 +414,15 @@ def _diagnose(facts: dict) -> list[Finding]:
     # `connected` were unknown here, F.unknown would already have forced the
     # `blocks_health` return above, so reaching this line in `ble` mode means
     # it is KNOWN -- True or False.)
-    if cfg.get("mode") == "ble" and connected is False:
+    if mode == "ble" and connected is False:
         return out
 
-    bits = [f"mode={cfg.get('mode')}"]
+    bits = [f"mode={mode}"]
     if cfg.get("haiku"):
         bits.append("haiku on")
     if cfg.get("tidbyt"):
         bits.append("tidbyt on")
-    if cfg.get("mode") == "ble":
+    if mode == "ble":
         bits.append("connected" if connected else "not connected")
     out.append(Finding("ok", "Everything looks healthy", ", ".join(bits), []))
     return out
