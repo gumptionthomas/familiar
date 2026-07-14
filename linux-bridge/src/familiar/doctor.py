@@ -437,8 +437,15 @@ def _diagnose(facts: dict) -> list[Finding]:
         # Reaching here in `ble` mode means `connected` is True: an unknown one
         # already returned via blocks_health, and a False one returned above.
         recent = F.opt("log", "recent_failures")   # gates nothing; text only
-        if recent:
-            bits.append(f"connected (recovered from {recent} failures "
+        # Only failures BEFORE the last successful connect actually recovered.
+        # `recent` is window-wide, so a failure that postdates the last connect
+        # has not recovered and must not be claimed as such -- in a tool whose
+        # entire value is not overstating its evidence.
+        healed = (recent - failures
+                  if (recent is not None and failures is not None)
+                  else None)
+        if healed and healed > 0:
+            bits.append(f"connected (recovered from {healed} failures "
                         f"in the last 10 min)")
         else:
             bits.append("connected")

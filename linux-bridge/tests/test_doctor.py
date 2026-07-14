@@ -1,3 +1,5 @@
+import pytest
+
 from familiar import doctor
 from familiar.config import Config
 
@@ -695,20 +697,21 @@ def test_an_unstable_link_is_never_called_healthy():
     assert not any(f.level == "ok" for f in findings)
 
 
-def test_an_unknown_flap_count_never_reads_as_healthy():
-    # `flaps` must be read through F.need(), not F.opt(): it gates the
-    # over-correction guard's decision (unstable_fires), so an unreadable
-    # count is exactly the "unknown read as fine" bug class this module keeps
-    # tripping over. Isolate it as the ONLY unknown log fact -- if the other
-    # three were also None, the blocks_health warning could come from any of
-    # them and this wouldn't pin `flaps` specifically.
-    findings = doctor.diagnose(_facts(
-        device={"paired": True, "connected": True},
-        log={"failures_since_connect": 0, "discover_since_connect": 0,
-             "not_found_since_connect": 0, "flaps": None,
-             "recent_failures": 0},
-    ))
-    assert not any(f.level == "ok" for f in findings)
+@pytest.mark.parametrize("key", [
+    "failures_since_connect", "discover_since_connect",
+    "not_found_since_connect", "flaps",
+])
+def test_an_unknown_log_fact_never_reads_as_healthy(key):
+    # Each of the four log facts must be read via F.need(), so an unreadable
+    # journal can never silently read as a clean one. They share a label, and
+    # _Facts.unknown dedupes by label -- so a sibling being known would MASK a
+    # downgraded .need()->.opt(). Isolate each key as the SOLE unknown.
+    #
+    # Seven defects in this function were all one bug: evidence read as more
+    # certain than it was. This is the test that stops the eighth.
+    findings = doctor.diagnose(_facts(log={key: None}))
+    assert not any(f.level == "ok" for f in findings), \
+        f"log.{key} unknown must suppress the health summary"
     assert any(f.level == "warn" and f.blocks_health for f in findings)
 
 
@@ -798,6 +801,89 @@ def test_collect_counts_everything_when_there_was_never_a_connect(monkeypatch):
 
     assert log["failures_since_connect"] == 7
     assert log["discover_since_connect"] == 7
+
+
+def test_recovery_is_not_claimed_for_a_failure_that_has_not_recovered():
+    # `recent_failures` is window-wide. A failure AFTER the last successful
+    # connect has not recovered, and must not be reported as if it had.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        log={"failures_since_connect": 1,    # <- postdates the last connect
+             "discover_since_connect": 0,
+             "not_found_since_connect": 1,
+             "flaps": 0,
+             "recent_failures": 1},          # ...and it is the only one
+    ))
+    summary = next((f for f in findings if f.level == "ok"), None)
+    assert summary is not None                     # sub-threshold: still healthy
+    assert "recovered" not in summary.why          # ...but nothing recovered
+
+
+def test_recovery_is_claimed_only_for_the_failures_that_healed():
+    # 5 in the window, 1 of them after the last connect -> 4 actually healed.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        log={"failures_since_connect": 1, "discover_since_connect": 0,
+             "not_found_since_connect": 1, "flaps": 0, "recent_failures": 5},
+    ))
+    summary = next(f for f in findings if f.level == "ok")
+    assert "recovered from 4 failures" in summary.why
+
+
+def test_mixed_failure_kinds_sum_toward_the_threshold():
+    # `failing` is the SUM since the last success: 2 discovery failures plus
+    # 1 'was not found' is 3 live failures, not two separate sub-threshold
+    # counts that each get to be ignored.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        log={"failures_since_connect": 3, "discover_since_connect": 2,
+             "not_found_since_connect": 1, "flaps": 0, "recent_failures": 3},
+    ))
+    errs = [f for f in findings if f.level == "error"]
+    assert errs and "phantom" in errs[0].title.lower()
+
+
+def test_the_production_incident_end_to_end(monkeypatch):
+    # The real 2026-07-13 log that made doctor report '!! Phantom link' on a
+    # healthy buddy. journal -> collect() -> diagnose(), asserting no error.
+    journal = "\n".join([
+        "[familiar] disconnected: Device with address AA:BB was not found.",
+        "[familiar] disconnected: Device with address AA:BB was not found.",
+        "[familiar] disconnected: Device with address AA:BB was not found.",
+        "[familiar] clearing a possible stale link to AA:BB",
+        "[familiar] connected AA:BB",
+    ])
+
+    def fake_run(cmd, **kw):
+        if cmd[0] == "bluetoothctl" and cmd[1] == "--version":
+            return "bluetoothctl: 5.66\n"
+        if cmd[0] == "bluetoothctl" and cmd[1] == "show":
+            return "\tPowered: yes\n\tPairable: yes\n"
+        if cmd[0] == "bluetoothctl" and cmd[1] == "info":
+            return ("\tPaired: yes\n\tBonded: yes\n\tTrusted: yes\n"
+                    "\tConnected: yes\n")
+        if cmd[0] == "systemctl" and "is-active" in cmd:
+            return "active\n"
+        if cmd[0] == "systemctl" and "MainPID" in " ".join(cmd):
+            return "1234\n"
+        if cmd[0] == "systemctl":
+            return "familiar.service enabled\n"
+        if cmd[0] == "pgrep":
+            return "1234\n"
+        if cmd[0] == "journalctl" and "-k" in cmd:
+            return ""
+        if cmd[0] == "journalctl":
+            return journal
+        return ""
+
+    monkeypatch.setattr(doctor, "_run", fake_run)
+    cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
+    findings = doctor.diagnose(doctor.collect(cfg))
+
+    assert [f for f in findings if f.level == "error"] == [], \
+        "the daemon already healed this -- doctor must not report it"
+    summary = next(f for f in findings if f.level == "ok")
+    assert "recovered from 3 failures" in summary.why
 
 
 def test_collect_counts_flaps_across_the_whole_window(monkeypatch):
