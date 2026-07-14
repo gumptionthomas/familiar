@@ -32,8 +32,9 @@ class Finding:
 
 
 # `device.connected` (from `bluetoothctl info`, right now) is an INSTANTANEOUS
-# sample. `log.discover_failures` / `log.not_found` / `kernel_smp_errors` are
-# counts over the last 10 minutes -- a WINDOW. During the real 2026-07-13
+# sample. `log.discover_since_connect` / `log.not_found_since_connect` /
+# `kernel_smp_errors` are counts over the last 10 minutes -- a WINDOW
+# (specifically, since the last successful connect). During the real 2026-07-13
 # failure the daemon loops connect -> GATT discovery fails -> disconnect ->
 # back off, so BlueZ genuinely reports Connected: yes for the seconds the link
 # is up. A trigger gated on `connected is not True` can sample mid-loop, see
@@ -44,16 +45,16 @@ class Finding:
 # link is failing; the instant sample is consulted only to tell WHICH
 # failure it is (see `failing` below).
 
-# Minimum `discover_failures` in the window that counts as corroborating
+# Minimum `discover_since_connect` in the window that counts as corroborating
 # evidence for a one-sided bond WHEN the kernel log also shows SMP errors for
 # our MAC. (A much higher count, with no kernel corroboration at all, is
 # damning on its own -- see BOND_FAILURES_ALONE.)
 BOND_MIN_FAILURES = 3
-# `discover_failures` alone, with no kernel corroboration (e.g. an unreadable
-# journal), that is damning on volume alone.
+# `discover_since_connect` alone, with no kernel corroboration (e.g. an
+# unreadable journal), that is damning on volume alone.
 BOND_FAILURES_ALONE = 10
-# Below this many discover_failures / not_found events in the window, treat
-# the log as noise -- not evidence the link is actually failing.
+# Below this many failures-since-connect (or flaps) events in the window,
+# treat the log as noise -- not evidence the link is actually failing.
 LINK_FAILING_MIN = 3
 
 
@@ -251,32 +252,29 @@ def _diagnose(facts: dict) -> list[Finding]:
             connected = F.need(
                 "device", "connected", "whether the stick is connected")
             paired = F.need("device", "paired", "whether the stick is paired")
-            # NEVER coerce an unknown windowed count into a number: `None`
-            # means "could not read the journal", not "it was clean". These
-            # stay `None`-able all the way through; `_meets` treats an
-            # unknown count as not meeting any threshold (so it cannot
-            # fabricate a trigger), while `F.need()` above has ALREADY
-            # registered the same `None` as a required-but-unknown fact -- so
-            # a `None` window can never silently read as a healthy one.
-            not_found = F.need("log", "not_found", "the daemon's recent log")
+            # Counted SINCE THE LAST SUCCESSFUL CONNECT, not across a flat
+            # window. A fault the daemon already healed is history, not a live
+            # problem -- reporting it for ten minutes afterwards is how doctor
+            # cried wolf on a healthy buddy after every service restart.
+            failures = F.need(
+                "log", "failures_since_connect", "the daemon's recent log")
             discover_fails = F.need(
-                "log", "discover_failures", "the daemon's recent log")
+                "log", "discover_since_connect", "the daemon's recent log")
+            not_found = F.need(
+                "log", "not_found_since_connect", "the daemon's recent log")
+            flaps = F.need("log", "flaps", "the daemon's recent log")
             # The ONE genuinely optional fact: corroboration only. An
             # unreadable kernel log is already covered by the log-volume
-            # trigger (BOND_FAILURES_ALONE), so its absence does not need its
-            # own warning -- it is never used on its own to justify health.
+            # trigger (BOND_FAILURES_ALONE), so its absence needs no warning
+            # of its own.
             smp = F.top("kernel_smp_errors")
 
-            # The WINDOW decides whether the link is working. The
-            # instantaneous `connected` sample must never veto it: during the
-            # real failure the daemon loops connect -> discovery-fails ->
-            # disconnect, so bluetoothctl legitimately says Connected: yes
-            # for the seconds the link is up.
-            failing = (_meets(discover_fails, LINK_FAILING_MIN)
-                       or _meets(not_found, LINK_FAILING_MIN))
+            failing = _meets(failures, LINK_FAILING_MIN)
 
             # Grade the one-sided-bond evidence by confidence. NONE of these
-            # branches consult `connected` -- that is the fix.
+            # branches consult `connected`: during the real failure the daemon
+            # loops connect -> discovery-fails -> disconnect, so bluetoothctl
+            # legitimately says Connected: yes for the seconds the link is up.
             bond_fires = (
                 paired is False                                    # definitive
                 or (failing and _meets(discover_fails, BOND_MIN_FAILURES)
@@ -285,28 +283,30 @@ def _diagnose(facts: dict) -> list[Finding]:
 
             # Only HERE does the instant sample matter, and only to
             # distinguish the failure type: a connected peripheral stops
-            # advertising, so "connected" plus the daemon still reporting
-            # "was not found" means BlueZ is holding a link the daemon can't
+            # advertising, so "connected" plus the daemon STILL reporting
+            # "was not found" means BlueZ is holding a link the daemon cannot
             # use.
             phantom_fires = (failing and connected is True
-                              and _meets(not_found, 1))
+                             and _meets(not_found, 1))
 
-            # A dead / flat / out-of-range stick: BlueZ keeps the paired
-            # record forever, so this shows up as "was not found" climbing
-            # with no confirmed connect -- not as a phantom (connected is not
-            # True) and, below BOND_FAILURES_ALONE, not as a bond failure
-            # either. Only reported when the bond finding didn't already
-            # explain it.
+            # A dead / flat / out-of-range stick: BlueZ keeps the paired record
+            # forever, so this shows up as "was not found" climbing with no
+            # confirmed connect.
             unreachable_fires = (
                 failing and _meets(not_found, LINK_FAILING_MIN)
                 and connected is not True and not bond_fires)
 
             # Failing, but none of the above -- the daemon's normal
-            # backoff-and-retry. Never send someone to hand-pair on this: a
-            # healthy long-lived link has NO "connected" line in the last 10
-            # minutes either, since that is the steady state.
+            # backoff-and-retry.
             flapping_fires = failing and not (
                 bond_fires or phantom_fires or unreachable_fires)
+
+            # THE OVER-CORRECTION GUARD. Counting only "since the last success"
+            # means a link that connects and drops repeatedly reads as healthy
+            # whenever we happen to sample just after a connect. The daemon logs
+            # "link flapped after N.Ns" separately from a held link ending, so
+            # the flap count catches it even while we are currently connected.
+            unstable_fires = _meets(flaps, LINK_FAILING_MIN)
 
             # The adapter first: a re-pair CANNOT work while it is not
             # pairable, so telling the user to re-pair before this is fixed
@@ -383,6 +383,17 @@ def _diagnose(facts: dict) -> list[Finding]:
                     "this often clears on its own. Re-run `familiar doctor` "
                     "if it persists.", [], blocks_health=True))
 
+            if unstable_fires:
+                out.append(Finding(
+                    "warn", "The link keeps flapping",
+                    f"The daemon has logged {flaps} short-lived connections in "
+                    f"the last 10 minutes. The link is up right now, but it is "
+                    f"not holding — the stick may be at the edge of range, or "
+                    f"low on battery.",
+                    ["# move the stick closer, or check its charge",
+                     "journalctl --user -u familiar -f   # watch it live"],
+                    blocks_health=True))
+
             # connected is None (bluetoothctl didn't answer for this device)
             # was registered by F.need() above, not handled here.
 
@@ -423,7 +434,14 @@ def _diagnose(facts: dict) -> list[Finding]:
     if cfg.get("tidbyt"):
         bits.append("tidbyt on")
     if mode == "ble":
-        bits.append("connected" if connected else "not connected")
+        # Reaching here in `ble` mode means `connected` is True: an unknown one
+        # already returned via blocks_health, and a False one returned above.
+        recent = F.opt("log", "recent_failures")   # gates nothing; text only
+        if recent:
+            bits.append(f"connected (recovered from {recent} failures "
+                        f"in the last 10 min)")
+        else:
+            bits.append("connected")
     out.append(Finding("ok", "Everything looks healthy", ", ".join(bits), []))
     return out
 
@@ -543,14 +561,41 @@ def collect(cfg) -> dict:
     jlog = _try(lambda: _run(
         ["journalctl", "--user", "-u", "familiar.service",
          "--since", "-10min", "--no-pager"]), "") or ""
-    log = {"discover_failures": None, "not_found": None,
-           "phantom_clears": None, "connected_recently": None}
+    log = {"failures_since_connect": None, "discover_since_connect": None,
+           "not_found_since_connect": None, "flaps": None,
+           "recent_failures": None}
     if jlog:
+        lines = jlog.splitlines()
+
+        # ORDERING, not counting. "Have there been failures recently?" was the
+        # wrong question -- a service restart leaves a phantom link that the
+        # daemon's own auto-clear fixes seconds later, and counting the window
+        # flat made doctor report that healed fault for ten minutes afterwards.
+        # The right question is "has anything gone wrong SINCE the last time it
+        # worked?" If there is no successful connect in the window at all, the
+        # link has not worked within living memory and every failure counts.
+        last_ok = -1
+        for i, line in enumerate(lines):
+            if "[familiar] connected " in line:
+                last_ok = i
+        after = lines[last_ok + 1:]
+
+        def _count(where, needle):
+            return sum(1 for line in where if needle in line)
+
+        nf = _count(after, "was not found")
+        df = _count(after, "failed to discover services")
         log = {
-            "discover_failures": jlog.count("failed to discover services"),
-            "not_found": jlog.count("was not found"),
-            "phantom_clears": jlog.count("clearing a possible stale link"),
-            "connected_recently": "[familiar] connected " in jlog,
+            "failures_since_connect": nf + df,
+            "discover_since_connect": df,
+            "not_found_since_connect": nf,
+            # Flaps are counted across the WHOLE window on purpose: flapping is
+            # repetition ACROSS connects, so "since the last connect" would be
+            # ~0 by construction and would miss it entirely.
+            "flaps": _count(lines, "link flapped after"),
+            # Summary text only -- never gates a decision.
+            "recent_failures": (_count(lines, "was not found")
+                                + _count(lines, "failed to discover services")),
         }
 
     mode = ("ble" if cfg.address
