@@ -1,3 +1,5 @@
+import pytest
+
 from familiar import doctor
 from familiar.config import Config
 
@@ -14,8 +16,9 @@ def _facts(**over):
         "device": {"known": True, "paired": True, "bonded": True,
                    "trusted": True, "connected": True},
         "kernel_smp_errors": 0,
-        "log": {"discover_failures": 0, "not_found": 0, "phantom_clears": 0,
-                "connected_recently": True},
+        "log": {"failures_since_connect": 0, "discover_since_connect": 0,
+                "not_found_since_connect": 0, "flaps": 0,
+                "recent_failures": 0},
     }
     for k, v in over.items():
         if isinstance(v, dict) and isinstance(base.get(k), dict):
@@ -46,7 +49,8 @@ def test_the_2026_07_13_failure_is_diagnosed_as_a_one_sided_bond():
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": False},
         kernel_smp_errors=3,
-        log={"discover_failures": 400, "connected_recently": False},
+        log={"failures_since_connect": 400, "discover_since_connect": 400,
+             "recent_failures": 400},
     ))
     errs = _errors(findings)
     assert errs, "a 400-failure discovery loop must be diagnosed, not shrugged at"
@@ -61,7 +65,6 @@ def test_the_2026_07_13_failure_is_diagnosed_as_a_one_sided_bond():
 def test_an_unpaired_device_is_the_same_one_sided_bond_diagnosis():
     findings = doctor.diagnose(_facts(
         device={"paired": False, "bonded": False, "connected": False},
-        log={"connected_recently": False},
     ))
     errs = _errors(findings)
     assert errs and "KeyboardOnly" in "\n".join(errs[0].remedy)
@@ -74,7 +77,6 @@ def test_a_non_pairable_adapter_is_reported_before_any_repair_advice():
     findings = doctor.diagnose(_facts(
         adapter={"pairable": False},
         device={"paired": False, "connected": False},
-        log={"connected_recently": False},
     ))
     titles = [t.lower() for t in _titles(_errors(findings))]
     pairable_at = next(i for i, t in enumerate(titles) if "pairable" in t)
@@ -86,7 +88,8 @@ def test_a_non_pairable_adapter_is_reported_before_any_repair_advice():
 def test_phantom_link_is_diagnosed_and_the_remedy_is_a_disconnect():
     findings = doctor.diagnose(_facts(
         device={"connected": True},
-        log={"not_found": 12, "connected_recently": False},
+        log={"failures_since_connect": 12, "not_found_since_connect": 12,
+             "recent_failures": 12},
     ))
     errs = _errors(findings)
     assert errs and "phantom" in errs[0].title.lower()
@@ -121,7 +124,6 @@ def test_tidbyt_only_mode_does_not_report_ble_failures():
         config={"mode": "tidbyt", "address": None, "tidbyt": True},
         device={"known": None, "paired": None, "bonded": None,
                 "trusted": None, "connected": None},
-        log={"connected_recently": None},
     ))
     assert _errors(findings) == []
 
@@ -136,8 +138,9 @@ def test_unknown_facts_never_produce_a_confident_diagnosis():
         device={"known": None, "paired": None, "bonded": None,
                 "trusted": None, "connected": None},
         kernel_smp_errors=None,
-        log={"discover_failures": None, "not_found": None,
-             "phantom_clears": None, "connected_recently": None},
+        log={"failures_since_connect": None, "discover_since_connect": None,
+             "not_found_since_connect": None, "flaps": None,
+             "recent_failures": None},
     ))
     assert _errors(findings) == []                      # no invented cause
     assert any(f.level == "warn" for f in findings)     # but it says so
@@ -191,15 +194,14 @@ def test_collect_parses_bluetoothctl_and_the_log(monkeypatch):
     assert facts["device"]["connected"] is False
     assert facts["service"]["active"] is True
     assert facts["kernel_smp_errors"] == 3
-    assert facts["log"]["discover_failures"] == 5
-    assert facts["log"]["phantom_clears"] == 1
-    assert facts["log"]["connected_recently"] is False
+    assert facts["log"]["discover_since_connect"] == 5
+    assert facts["log"]["failures_since_connect"] == 5
+    assert facts["log"]["recent_failures"] == 5
 
 
 def test_main_exits_1_on_an_error_and_prints_the_remedy(monkeypatch, capsys):
     monkeypatch.setattr(doctor, "collect", lambda cfg: _facts(
-        device={"paired": False, "connected": False},
-        log={"connected_recently": False}))
+        device={"paired": False, "connected": False}))
     assert doctor.main([]) == 1
     out = capsys.readouterr().out
     assert "KeyboardOnly" in out          # the remedy is actually printed
@@ -228,7 +230,8 @@ def test_a_single_transient_failure_does_not_advise_a_hand_repair():
     # must never send the user to stop the service and hand-pair with a passkey.
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": True},
-        log={"discover_failures": 1, "connected_recently": False},
+        log={"failures_since_connect": 1, "discover_since_connect": 1,
+             "recent_failures": 1},
     ))
     assert [f for f in findings if f.level == "error"] == []
     assert "KeyboardOnly" not in "\n".join(
@@ -270,7 +273,8 @@ def test_the_bond_diagnosis_still_fires_on_the_real_thing():
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": False},
         kernel_smp_errors=3,
-        log={"discover_failures": 400, "connected_recently": False},
+        log={"failures_since_connect": 400, "discover_since_connect": 400,
+             "recent_failures": 400},
     ))
     errs = [f for f in findings if f.level == "error"]
     assert errs and "KeyboardOnly" in "\n".join(errs[0].remedy)
@@ -355,7 +359,8 @@ def test_the_real_failure_is_caught_even_if_bluetoothctl_samples_it_connected():
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": True},      # <- sampled mid-loop
         kernel_smp_errors=3,
-        log={"discover_failures": 400, "connected_recently": False},
+        log={"failures_since_connect": 400, "discover_since_connect": 400,
+             "recent_failures": 400},
     ))
     errs = [f for f in findings if f.level == "error"]
     assert errs, "400 failures + the SMP fingerprint must never read as healthy"
@@ -368,7 +373,8 @@ def test_the_early_catch_corridor_fires_on_smp_corroboration():
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": False},
         kernel_smp_errors=2,
-        log={"discover_failures": 4, "connected_recently": False},
+        log={"failures_since_connect": 4, "discover_since_connect": 4,
+             "recent_failures": 4},
     ))
     errs = [f for f in findings if f.level == "error"]
     assert errs and "KeyboardOnly" in "\n".join(errs[0].remedy)
@@ -378,7 +384,8 @@ def test_log_volume_alone_fires_without_a_readable_kernel_log():
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": False},
         kernel_smp_errors=None,                 # journal unreadable
-        log={"discover_failures": 12, "connected_recently": False},
+        log={"failures_since_connect": 12, "discover_since_connect": 12,
+             "recent_failures": 12},
     ))
     assert [f for f in findings if f.level == "error"]
 
@@ -386,7 +393,8 @@ def test_log_volume_alone_fires_without_a_readable_kernel_log():
 def test_a_flapping_link_never_claims_health():
     findings = doctor.diagnose(_facts(
         device={"connected": False},
-        log={"discover_failures": 5, "connected_recently": False},
+        log={"failures_since_connect": 5, "discover_since_connect": 5,
+             "recent_failures": 5},
     ))
     assert any(f.level == "warn" for f in findings)
     assert not any(f.level == "ok" for f in findings), \
@@ -399,7 +407,8 @@ def test_an_unreachable_stick_is_reported_not_called_healthy():
     # produce NO finding at all and print "healthy, not connected".
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": False},
-        log={"not_found": 20, "discover_failures": 0, "connected_recently": False},
+        log={"failures_since_connect": 20, "not_found_since_connect": 20,
+             "discover_since_connect": 0, "recent_failures": 20},
     ))
     assert any(f.level in ("warn", "error") for f in findings)
     assert not any(f.level == "ok" for f in findings)
@@ -420,7 +429,8 @@ def test_bond_min_failures_is_pinned():
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": False},
         kernel_smp_errors=1,
-        log={"discover_failures": 3, "connected_recently": False},
+        log={"failures_since_connect": 3, "discover_since_connect": 3,
+             "recent_failures": 3},
     ))
     errs = [f for f in findings if f.level == "error"]
     assert errs and "KeyboardOnly" in "\n".join(errs[0].remedy)
@@ -434,7 +444,8 @@ def test_bond_failures_alone_is_pinned():
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": False},
         kernel_smp_errors=None,
-        log={"discover_failures": 10, "connected_recently": False},
+        log={"failures_since_connect": 10, "discover_since_connect": 10,
+             "recent_failures": 10},
     ))
     errs = [f for f in findings if f.level == "error"]
     assert errs and "KeyboardOnly" in "\n".join(errs[0].remedy)
@@ -448,7 +459,8 @@ def test_blocks_health_gate_is_not_bypassable_by_deleting_the_check():
     # saves this test -- only `blocks_health` on the flapping warn can.
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": True},
-        log={"discover_failures": 5, "not_found": 0, "connected_recently": False},
+        log={"failures_since_connect": 5, "discover_since_connect": 5,
+             "not_found_since_connect": 0, "recent_failures": 5},
     ))
     assert [f for f in findings if f.level == "error"] == []
     warns = [f for f in findings if f.level == "warn"]
@@ -468,8 +480,9 @@ def test_an_unreadable_journal_never_reads_as_healthy():
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": True},
         kernel_smp_errors=None,
-        log={"discover_failures": None, "not_found": None,
-             "phantom_clears": None, "connected_recently": None},
+        log={"failures_since_connect": None, "discover_since_connect": None,
+             "not_found_since_connect": None, "flaps": None,
+             "recent_failures": None},
     ))
     assert not any(f.level == "ok" for f in findings), \
         "we could not read the log -- we must not claim health"
@@ -482,7 +495,8 @@ def test_diagnose_never_returns_an_empty_report():
     # can give.
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": False},
-        log={"not_found": 1, "discover_failures": 0, "connected_recently": False},
+        log={"failures_since_connect": 1, "not_found_since_connect": 1,
+             "discover_since_connect": 0, "recent_failures": 1},
     ))
     assert findings, "a diagnostic must never print nothing"
     assert not any(f.level == "ok" for f in findings)
@@ -508,8 +522,9 @@ def test_tidbyt_only_mode_does_not_warn_about_irrelevant_ble_facts():
         adapter={"powered": None, "pairable": None},
         device={"known": None, "paired": None, "bonded": None,
                 "trusted": None, "connected": None},
-        log={"discover_failures": None, "not_found": None,
-             "phantom_clears": None, "connected_recently": None},
+        log={"failures_since_connect": None, "discover_since_connect": None,
+             "not_found_since_connect": None, "flaps": None,
+             "recent_failures": None},
     ))
     assert [f for f in findings if f.level == "error"] == []
     assert any(f.level == "ok" for f in findings), \
@@ -520,7 +535,8 @@ def test_a_single_blip_is_not_flapping(monkeypatch):
     # Pins LINK_FAILING_MIN: dropping it to 1 would resurrect round 1's cry-wolf.
     findings = doctor.diagnose(_facts(
         device={"connected": True},
-        log={"discover_failures": 1, "connected_recently": False}))
+        log={"failures_since_connect": 1, "discover_since_connect": 1,
+             "recent_failures": 1}))
     assert [f for f in findings if f.level == "error"] == []
     assert any(f.level == "ok" for f in findings)
 
@@ -531,7 +547,8 @@ def test_a_dead_stick_is_not_called_a_phantom_link():
     # remedy (`bluetoothctl disconnect`).
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": False},
-        log={"not_found": 20, "discover_failures": 0, "connected_recently": False},
+        log={"failures_since_connect": 20, "not_found_since_connect": 20,
+             "discover_since_connect": 0, "recent_failures": 20},
     ))
     assert not any("phantom" in f.title.lower() for f in findings)
 
@@ -544,8 +561,9 @@ def test_an_unknown_journal_yields_no_error_findings():
     # one's cry-wolf all over again.
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": True},
-        log={"discover_failures": None, "not_found": None,
-             "phantom_clears": None, "connected_recently": None},
+        log={"failures_since_connect": None, "discover_since_connect": None,
+             "not_found_since_connect": None, "flaps": None,
+             "recent_failures": None},
     ))
     assert [f for f in findings if f.level == "error"] == []
     assert not any(f.level == "ok" for f in findings)      # but no health claim either
@@ -566,8 +584,7 @@ def test_an_uncountable_manual_process_never_reads_as_healthy():
 def test_a_powered_off_adapter_is_reported():
     # Deleting this branch passed the whole suite.
     findings = doctor.diagnose(_facts(adapter={"powered": False},
-                                      device={"connected": False},
-                                      log={"connected_recently": False}))
+                                      device={"connected": False}))
     errs = [f for f in findings if f.level == "error"]
     assert errs and any("power on" in line for f in errs for line in f.remedy)
 
@@ -600,7 +617,300 @@ def test_unreachable_findings_blocks_health_flag_is_pinned():
     # this asserts the flag directly rather than relying on that guard.
     findings = doctor.diagnose(_facts(
         device={"paired": True, "connected": False},
-        log={"not_found": 20, "discover_failures": 0, "connected_recently": False},
+        log={"failures_since_connect": 20, "not_found_since_connect": 20,
+             "discover_since_connect": 0, "recent_failures": 20},
     ))
     unreachable = next(f for f in findings if "not reachable" in f.title.lower())
     assert unreachable.blocks_health is True
+
+
+# --- round 5: count failures SINCE THE LAST SUCCESSFUL CONNECT -------------
+
+
+def test_a_fault_the_daemon_already_fixed_is_not_reported(capsys):
+    # THE REGRESSION (caught in production minutes after PR #51 merged). A
+    # service restart leaves a phantom BlueZ link; the daemon's own auto-clear
+    # (PR #44) fixes it seconds later. doctor counted the historical failures
+    # and reported "!! Phantom link" on a perfectly healthy, connected buddy --
+    # every time anyone restarted the service.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        log={"failures_since_connect": 0,      # it RECOVERED after them
+             "discover_since_connect": 0,
+             "not_found_since_connect": 0,
+             "flaps": 0,
+             "recent_failures": 3},            # ...but they did happen
+    ))
+    assert [f for f in findings if f.level == "error"] == []
+    assert any(f.level == "ok" for f in findings)
+    # ...and say so, rather than silently claiming perfection.
+    summary = next(f for f in findings if f.level == "ok")
+    assert "recovered" in summary.why
+
+
+def test_the_2026_07_13_failure_still_fires():
+    # No successful connect in the window at all -> every failure counts, and
+    # the bond diagnosis must still fire even though bluetoothctl sampled the
+    # device as Connected: yes mid-failure-loop.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        kernel_smp_errors=3,
+        log={"failures_since_connect": 400,
+             "discover_since_connect": 400,
+             "not_found_since_connect": 0,
+             "flaps": 0,
+             "recent_failures": 400},
+    ))
+    errs = [f for f in findings if f.level == "error"]
+    assert errs and "KeyboardOnly" in "\n".join(errs[0].remedy)
+    assert not any(f.level == "ok" for f in findings)
+
+
+def test_a_live_phantom_link_still_fires():
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        log={"failures_since_connect": 5,
+             "discover_since_connect": 0,
+             "not_found_since_connect": 5,     # still failing NOW
+             "flaps": 0,
+             "recent_failures": 5},
+    ))
+    errs = [f for f in findings if f.level == "error"]
+    assert errs and "phantom" in errs[0].title.lower()
+    assert any("disconnect" in line for line in errs[0].remedy)
+
+
+def test_an_unstable_link_is_never_called_healthy():
+    # THE OVER-CORRECTION GUARD. A link that connects and drops repeatedly will
+    # often be sampled just after a connect -- failures_since_connect ~ 0 -- so
+    # counting only "since the last success" would call it healthy. The daemon
+    # logs "link flapped after N.Ns" distinctly; that count is what catches it.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        log={"failures_since_connect": 0,
+             "discover_since_connect": 0,
+             "not_found_since_connect": 0,
+             "flaps": 5,                       # up right now, but not trustworthy
+             "recent_failures": 0},
+    ))
+    assert any(f.level == "warn" and f.blocks_health for f in findings)
+    assert not any(f.level == "ok" for f in findings)
+
+
+@pytest.mark.parametrize("key", [
+    "failures_since_connect", "discover_since_connect",
+    "not_found_since_connect", "flaps",
+])
+def test_an_unknown_log_fact_never_reads_as_healthy(key):
+    # Each of the four log facts must be read via F.need(), so an unreadable
+    # journal can never silently read as a clean one. They share a label, and
+    # _Facts.unknown dedupes by label -- so a sibling being known would MASK a
+    # downgraded .need()->.opt(). Isolate each key as the SOLE unknown.
+    #
+    # Seven defects in this function were all one bug: evidence read as more
+    # certain than it was. This is the test that stops the eighth.
+    findings = doctor.diagnose(_facts(log={key: None}))
+    assert not any(f.level == "ok" for f in findings), \
+        f"log.{key} unknown must suppress the health summary"
+    assert any(f.level == "warn" and f.blocks_health for f in findings)
+
+
+def test_one_or_two_flaps_is_not_instability():
+    # Pins LINK_FAILING_MIN: dropping it to 1 resurrects the cry-wolf class.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        log={"failures_since_connect": 0, "discover_since_connect": 0,
+             "not_found_since_connect": 0, "flaps": 2, "recent_failures": 0},
+    ))
+    assert [f for f in findings if f.level == "error"] == []
+    assert any(f.level == "ok" for f in findings)
+
+
+def test_collect_counts_only_failures_after_the_last_connect(monkeypatch):
+    # The whole fix, at the collect() layer: ordering, not counting.
+    journal = "\n".join([
+        "[familiar] disconnected: Device with address AA:BB was not found.",
+        "[familiar] disconnected: Device with address AA:BB was not found.",
+        "[familiar] disconnected: Device with address AA:BB was not found.",
+        "[familiar] clearing a possible stale link to AA:BB",
+        "[familiar] connected AA:BB",              # <- RECOVERED here
+    ])
+
+    def fake_run(cmd, **kw):
+        if cmd[0] == "bluetoothctl" and cmd[1] == "--version":
+            return "bluetoothctl: 5.66\n"
+        if cmd[0] == "journalctl" and "-k" in cmd:
+            return ""
+        if cmd[0] == "journalctl":
+            return journal
+        return ""
+
+    monkeypatch.setattr(doctor, "_run", fake_run)
+    cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
+    log = doctor.collect(cfg)["log"]
+
+    assert log["failures_since_connect"] == 0     # all three preceded the connect
+    assert log["not_found_since_connect"] == 0
+    assert log["recent_failures"] == 3            # ...but they are still visible
+
+
+def test_collect_counts_failures_that_followed_the_last_connect(monkeypatch):
+    journal = "\n".join([
+        "[familiar] connected AA:BB",
+        "[familiar] disconnected: Device with address AA:BB was not found.",
+        "[familiar] disconnected: failed to discover services, device disconnected",
+    ])
+
+    def fake_run(cmd, **kw):
+        if cmd[0] == "bluetoothctl" and cmd[1] == "--version":
+            return "bluetoothctl: 5.66\n"
+        if cmd[0] == "journalctl" and "-k" in cmd:
+            return ""
+        if cmd[0] == "journalctl":
+            return journal
+        return ""
+
+    monkeypatch.setattr(doctor, "_run", fake_run)
+    cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
+    log = doctor.collect(cfg)["log"]
+
+    assert log["failures_since_connect"] == 2
+    assert log["not_found_since_connect"] == 1
+    assert log["discover_since_connect"] == 1
+
+
+def test_collect_counts_everything_when_there_was_never_a_connect(monkeypatch):
+    # No successful connect in the window: the link has not worked within living
+    # memory, so every failure counts. This is the 2026-07-13 shape.
+    journal = "\n".join([
+        "[familiar] disconnected: failed to discover services, device disconnected",
+    ] * 7)
+
+    def fake_run(cmd, **kw):
+        if cmd[0] == "bluetoothctl" and cmd[1] == "--version":
+            return "bluetoothctl: 5.66\n"
+        if cmd[0] == "journalctl" and "-k" in cmd:
+            return ""
+        if cmd[0] == "journalctl":
+            return journal
+        return ""
+
+    monkeypatch.setattr(doctor, "_run", fake_run)
+    cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
+    log = doctor.collect(cfg)["log"]
+
+    assert log["failures_since_connect"] == 7
+    assert log["discover_since_connect"] == 7
+
+
+def test_recovery_is_not_claimed_for_a_failure_that_has_not_recovered():
+    # `recent_failures` is window-wide. A failure AFTER the last successful
+    # connect has not recovered, and must not be reported as if it had.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        log={"failures_since_connect": 1,    # <- postdates the last connect
+             "discover_since_connect": 0,
+             "not_found_since_connect": 1,
+             "flaps": 0,
+             "recent_failures": 1},          # ...and it is the only one
+    ))
+    summary = next((f for f in findings if f.level == "ok"), None)
+    assert summary is not None                     # sub-threshold: still healthy
+    assert "recovered" not in summary.why          # ...but nothing recovered
+
+
+def test_recovery_is_claimed_only_for_the_failures_that_healed():
+    # 5 in the window, 1 of them after the last connect -> 4 actually healed.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        log={"failures_since_connect": 1, "discover_since_connect": 0,
+             "not_found_since_connect": 1, "flaps": 0, "recent_failures": 5},
+    ))
+    summary = next(f for f in findings if f.level == "ok")
+    assert "recovered from 4 failures" in summary.why
+
+
+def test_mixed_failure_kinds_sum_toward_the_threshold():
+    # `failing` is the SUM since the last success: 2 discovery failures plus
+    # 1 'was not found' is 3 live failures, not two separate sub-threshold
+    # counts that each get to be ignored.
+    findings = doctor.diagnose(_facts(
+        device={"paired": True, "connected": True},
+        log={"failures_since_connect": 3, "discover_since_connect": 2,
+             "not_found_since_connect": 1, "flaps": 0, "recent_failures": 3},
+    ))
+    errs = [f for f in findings if f.level == "error"]
+    assert errs and "phantom" in errs[0].title.lower()
+
+
+def test_the_production_incident_end_to_end(monkeypatch):
+    # The real 2026-07-13 log that made doctor report '!! Phantom link' on a
+    # healthy buddy. journal -> collect() -> diagnose(), asserting no error.
+    journal = "\n".join([
+        "[familiar] disconnected: Device with address AA:BB was not found.",
+        "[familiar] disconnected: Device with address AA:BB was not found.",
+        "[familiar] disconnected: Device with address AA:BB was not found.",
+        "[familiar] clearing a possible stale link to AA:BB",
+        "[familiar] connected AA:BB",
+    ])
+
+    def fake_run(cmd, **kw):
+        if cmd[0] == "bluetoothctl" and cmd[1] == "--version":
+            return "bluetoothctl: 5.66\n"
+        if cmd[0] == "bluetoothctl" and cmd[1] == "show":
+            return "\tPowered: yes\n\tPairable: yes\n"
+        if cmd[0] == "bluetoothctl" and cmd[1] == "info":
+            return ("\tPaired: yes\n\tBonded: yes\n\tTrusted: yes\n"
+                    "\tConnected: yes\n")
+        if cmd[0] == "systemctl" and "is-active" in cmd:
+            return "active\n"
+        if cmd[0] == "systemctl" and "MainPID" in " ".join(cmd):
+            return "1234\n"
+        if cmd[0] == "systemctl":
+            return "familiar.service enabled\n"
+        if cmd[0] == "pgrep":
+            return "1234\n"
+        if cmd[0] == "journalctl" and "-k" in cmd:
+            return ""
+        if cmd[0] == "journalctl":
+            return journal
+        return ""
+
+    monkeypatch.setattr(doctor, "_run", fake_run)
+    cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
+    findings = doctor.diagnose(doctor.collect(cfg))
+
+    assert [f for f in findings if f.level == "error"] == [], \
+        "the daemon already healed this -- doctor must not report it"
+    summary = next(f for f in findings if f.level == "ok")
+    assert "recovered from 3 failures" in summary.why
+
+
+def test_collect_counts_flaps_across_the_whole_window(monkeypatch):
+    # Flaps are repetition ACROSS connects, so "since the last connect" is the
+    # wrong denominator -- it would be ~0 by construction.
+    journal = "\n".join([
+        "[familiar] connected AA:BB",
+        "[familiar] link flapped after 2.1s; backing off AA:BB",
+        "[familiar] connected AA:BB",
+        "[familiar] link flapped after 1.8s; backing off AA:BB",
+        "[familiar] connected AA:BB",
+        "[familiar] link flapped after 3.0s; backing off AA:BB",
+        "[familiar] connected AA:BB",
+    ])
+
+    def fake_run(cmd, **kw):
+        if cmd[0] == "bluetoothctl" and cmd[1] == "--version":
+            return "bluetoothctl: 5.66\n"
+        if cmd[0] == "journalctl" and "-k" in cmd:
+            return ""
+        if cmd[0] == "journalctl":
+            return journal
+        return ""
+
+    monkeypatch.setattr(doctor, "_run", fake_run)
+    cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
+    log = doctor.collect(cfg)["log"]
+
+    assert log["failures_since_connect"] == 0     # sampled right after a connect
+    assert log["flaps"] == 3                      # ...but it is plainly unstable
