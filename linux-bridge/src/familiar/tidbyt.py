@@ -11,6 +11,8 @@ import urllib.request
 from . import haiku_render
 
 PUSH_URL = "https://api.tidbyt.com/v0/devices/%s/push"
+# Must stay alphanumeric — the API 400s on hyphens, so no "claude-buddy" here.
+INSTALLATION_ID = "familiar"
 
 
 def _post(url, data, headers) -> int:
@@ -23,7 +25,7 @@ def _post(url, data, headers) -> int:
 
 
 async def push_image(webp_bytes, *, device_id, api_token,
-                     installation_id="claudebuddy", poster=None) -> bool:
+                     installation_id=INSTALLATION_ID, poster=None) -> bool:
     if not (device_id and api_token and webp_bytes):
         return False
     post = poster or _post
@@ -43,7 +45,7 @@ async def push_image(webp_bytes, *, device_id, api_token,
         return False
 
 
-async def push(lines, *, device_id, api_token, installation_id="claudebuddy",
+async def push(lines, *, device_id, api_token, installation_id=INSTALLATION_ID,
                renderer=None, poster=None) -> bool:
     if not any(lines):
         return False
