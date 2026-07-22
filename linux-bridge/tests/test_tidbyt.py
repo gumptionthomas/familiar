@@ -15,9 +15,14 @@ def test_push_image_posts_base64_webp():
     url, body, headers = calls[0]
     assert url == "https://api.tidbyt.com/v0/devices/dev1/push"
     assert base64.b64decode(body["image"]) == b"WEBPDATA"
-    assert body["installationID"] == "claudebuddy"
+    assert body["installationID"] == "familiar"
     assert body["background"] is False
     assert headers["Authorization"] == "Bearer tok"
+
+
+def test_installation_id_is_alphanumeric():
+    # The Tidbyt API 400s on hyphens, so a rename must never reintroduce one.
+    assert tidbyt.INSTALLATION_ID.isalnum()
 
 
 def test_push_image_missing_config_is_false():
