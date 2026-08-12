@@ -2,6 +2,7 @@
 #include <LittleFS.h>
 #include <stdarg.h>
 #include "ble_bridge.h"
+#include "version.h"
 #include "data.h"
 #include "buddy.h"
 
@@ -636,6 +637,7 @@ void drawInfo() {
     spr.setTextColor(p.text, p.bg);
     ln("SYSTEM");
     spr.setTextColor(p.textDim, p.bg);
+    ln("  fw       %s", fwVersionDisplay());
     if (ownerName()[0]) ln("  owner    %s", ownerName());
     uint32_t up = millis() / 1000;
     ln("  uptime   %luh %02lum", up / 3600, (up / 60) % 60);
