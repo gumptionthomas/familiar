@@ -40,13 +40,26 @@ async def main():
     args = ap.parse_args()
 
     rows = asyncio.Queue()
+    buf = bytearray()
 
     def on_notify(_c, data):
-        for line in data.decode("utf-8", "replace").splitlines():
-            if not line.strip().startswith("{"):
-                continue
+        # BLE notifications are fragmented: ble_bridge.cpp caps chunks at 180 bytes,
+        # but the status reply (320-byte buffer with name, owner, sec, bat{4}, sys{4},
+        # stats{5}) exceeds that, so replies always span 2+ notifications. Reassemble
+        # on newline boundaries (firmware terminates each reply with \n). Mirrors
+        # daemon.py:84-96 for the same line-delimited JSON protocol.
+        nonlocal buf
+        buf.extend(data)
+        # Bound the buffer to prevent unbounded growth if a malformed reply never
+        # terminates with \n. A reply that large is corrupt anyway.
+        if len(buf) > 8192:
+            buf.clear()
+            return
+        while b"\n" in buf:
+            line, _, rest = buf.partition(b"\n")
+            buf[:] = rest
             try:
-                msg = json.loads(line)
+                msg = json.loads(line.decode("utf-8", "replace"))
             except Exception:
                 continue
             if msg.get("ack") == "status":
