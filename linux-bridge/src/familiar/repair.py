@@ -30,9 +30,9 @@ async def run_repair(address, bluez, ui, service, *,
         report.steps.append((label, "ok"))
         ui.info(f"  {label}")
 
-    service.stop()
-    done("stopped the daemon")
     try:
+        service.stop()
+        done("stopped the daemon")
         # Without this, BlueZ answers every pairing attempt with "Pairing not
         # supported" and no amount of retrying can succeed.
         await bluez.ensure_pairable()
@@ -69,7 +69,7 @@ async def run_repair(address, bluez, ui, service, *,
         return report
     finally:
         service.start()
-        report.steps.append(("restarted the daemon", "ok"))
+        done("restarted the daemon")
 
     if await service.wait_for_connect(connect_timeout):
         report.ok = True

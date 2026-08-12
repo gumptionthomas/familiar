@@ -54,12 +54,15 @@ class FakeUi:
 
 
 class FakeService:
-    def __init__(self, connects=True):
+    def __init__(self, connects=True, stop_raises=False):
         self.calls = []
         self._connects = connects
+        self._stop_raises = stop_raises
 
     def stop(self):
         self.calls.append("stop")
+        if self._stop_raises:
+            raise RuntimeError("systemctl stop failed")
 
     def start(self):
         self.calls.append("start")
@@ -143,3 +146,10 @@ def test_pairing_that_does_not_lead_to_a_connect_is_not_called_ok():
     report, _, _, _ = _run(service=FakeService(connects=False))
     assert report.ok is False
     assert "doctor" in report.message
+
+
+def test_a_failing_stop_still_restarts_the_daemon():
+    service = FakeService(stop_raises=True)
+    report, _, _, service = _run(service=service)
+    assert report.ok is False
+    assert "start" in service.calls
