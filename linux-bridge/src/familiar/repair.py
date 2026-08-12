@@ -79,3 +79,53 @@ async def run_repair(address, bluez, ui, service, *,
             f"paired, but the daemon did not connect within "
             f"{int(connect_timeout)}s — run `familiar doctor`")
     return report
+
+
+class _Console:
+    def ask_passkey(self):
+        return input("      passkey shown ON THE STICK: ").strip()
+
+    def info(self, msg):
+        print(msg)
+
+
+def main(argv=None) -> int:
+    import argparse
+    import asyncio
+
+    from .bluez_agent import Bluez, connect_system_bus
+    from .config import load as load_config   # doctor.py aliases it the same way
+    from .service_ctl import Service
+
+    ap = argparse.ArgumentParser(
+        prog="familiar repair",
+        description="Re-pair the M5 after it loses its side of the bond. "
+                    "Stops the daemon, re-pairs, restarts, and verifies.")
+    args = ap.parse_args(argv)
+
+    cfg = load_config()
+    print("familiar repair — the stick will show a 6-digit code\n")
+
+    async def go():
+        bus = await connect_system_bus()
+        bluez = Bluez(bus)
+        await bluez.register_agent()
+        return await run_repair(cfg.address, bluez, _Console(), Service())
+
+    try:
+        report = asyncio.run(go())
+    except Exception as e:
+        print(f"\n!!  repair could not run: {type(e).__name__}: {e}\n")
+        report = None
+
+    if report is not None and report.ok:
+        print(f"\nOK  {report.message}")
+        return 0
+
+    if report is not None:
+        print(f"\n!!  {report.message}")
+    print("\n    the manual steps, if you need them:\n")
+    from .doctor import _repair_steps
+    for line in _repair_steps(cfg.address):
+        print(f"      {line}")
+    return 1

@@ -113,6 +113,9 @@ class _Facts:
 
 
 _REPAIR = [
+    "familiar repair          # does everything below, for you",
+    "",
+    "# or by hand:",
     "systemctl --user stop familiar",
     "bluetoothctl",
     "  pairable on          # without this, pairing can NEVER succeed",

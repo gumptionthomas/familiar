@@ -175,3 +175,24 @@ def test_saw_connect_requires_the_space_after_connected():
     # Without the trailing space in the match, "[familiar] connected" is a
     # substring of this line and it would read as a successful connect.
     assert service_ctl.saw_connect("[familiar] connectedish\n") is False
+
+
+from familiar import doctor
+
+
+def test_doctor_points_at_the_repair_command():
+    steps = doctor._repair_steps("F0:16:1D:03:4C:FA")
+    assert any("familiar repair" in line for line in steps)
+
+
+def test_doctor_still_prints_the_manual_fallback():
+    # The command can fail (no D-Bus, an adapter that will not power on). The
+    # hand steps must remain, or a failed repair leaves the user with nothing.
+    joined = "\n".join(doctor._repair_steps("F0:16:1D:03:4C:FA"))
+    assert "KeyboardOnly" in joined
+    assert "pairable on" in joined
+
+
+def test_the_cli_knows_the_repair_command():
+    from familiar import cli
+    assert "repair" in cli._HELP
