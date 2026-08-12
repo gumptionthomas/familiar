@@ -169,3 +169,9 @@ def test_saw_connect_is_not_fooled_by_a_disconnect():
     # far more disconnects than connects, so this would invert the result.
     assert service_ctl.saw_connect(
         "[familiar] disconnected: failed to discover services\n") is False
+
+
+def test_saw_connect_requires_the_space_after_connected():
+    # Without the trailing space in the match, "[familiar] connected" is a
+    # substring of this line and it would read as a successful connect.
+    assert service_ctl.saw_connect("[familiar] connectedish\n") is False
