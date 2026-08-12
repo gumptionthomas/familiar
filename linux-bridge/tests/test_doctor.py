@@ -199,6 +199,43 @@ def test_collect_parses_bluetoothctl_and_the_log(monkeypatch):
     assert facts["log"]["recent_failures"] == 5
 
 
+def test_a_service_restart_resets_the_failure_counters(monkeypatch):
+    # THE 2026-08-11 bug. A re-pair fixed a one-sided bond, and the documented
+    # procedure ends with a service restart -- but the pre-repair failures were
+    # still sitting in the 10-minute window, so doctor kept demanding the very
+    # re-pair the user had just finished. Evidence from before a fresh start
+    # says nothing about the run happening now.
+    def fake_run(cmd, **kw):
+        if cmd[0] == "bluetoothctl" and cmd[1] == "--version":
+            return "bluetoothctl: 5.66\n"
+        if cmd[0] == "bluetoothctl" and cmd[1] == "show":
+            return "\tPowered: yes\n\tPairable: yes\n"
+        if cmd[0] == "bluetoothctl" and cmd[1] == "info":
+            return "\tPaired: yes\n\tBonded: yes\n\tTrusted: yes\n\tConnected: yes\n"
+        if cmd[0] == "systemctl":
+            return "active\n"
+        if cmd[0] == "journalctl" and "-k" in cmd:
+            return ""
+        if cmd[0] == "journalctl":
+            return (
+                "[familiar] disconnected: failed to discover services\n" * 14 +
+                "Started familiar.service - Familiar desk buddy.\n" +
+                "[familiar] disconnected: Device with address AA:BB was not found.\n"
+            )
+        if cmd[0] == "pgrep":
+            return ""
+        raise AssertionError(f"unexpected command: {cmd}")
+
+    monkeypatch.setattr(doctor, "_run", fake_run)
+    cfg = Config(address="AA:BB", owner="", socket_path="/tmp/x.sock")
+    facts = doctor.collect(cfg)
+
+    assert facts["log"]["discover_since_connect"] == 0, \
+        "failures from before the restart are not evidence about this run"
+    assert facts["log"]["not_found_since_connect"] == 1
+    assert facts["log"]["failures_since_connect"] == 1
+
+
 def test_main_exits_1_on_an_error_and_prints_the_remedy(monkeypatch, capsys):
     monkeypatch.setattr(doctor, "collect", lambda cfg: _facts(
         device={"paired": False, "connected": False}))

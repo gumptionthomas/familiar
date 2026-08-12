@@ -581,9 +581,19 @@ def collect(cfg) -> dict:
         # The right question is "has anything gone wrong SINCE the last time it
         # worked?" If there is no successful connect in the window at all, the
         # link has not worked within living memory and every failure counts.
+        # A fresh START is as much of a reset as a successful connect. The
+        # documented re-pair ends with `systemctl --user restart familiar`, so
+        # without this the failures that PROVED the old fault outlive the fix
+        # and doctor demands the re-pair the user has just finished (2026-08-11).
+        # Evidence from a previous run is not evidence about this one; if the
+        # fault is still live, the daemon re-earns the count within minutes.
+        # (systemd >= 250 puts the unit name in that line; on older systemd it
+        # logs the Description instead and this anchor silently stops matching,
+        # which degrades to the old behaviour rather than breaking anything.)
         last_ok = -1
         for i, line in enumerate(lines):
-            if "[familiar] connected " in line:
+            if ("[familiar] connected " in line
+                    or "Started familiar.service" in line):
                 last_ok = i
         after = lines[last_ok + 1:]
 
