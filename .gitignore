@@ -9,3 +9,9 @@ __pycache__/
 .venv/
 dist/
 *.egg-info/
+
+# Claude Code scratch. .claude/worktrees/ holds entire nested checkouts of this
+# repo, so leaving it untracked-but-committable means one `git add -A` commits a
+# copy of the repo into itself. settings.local.json is personal, not team config.
+.claude/
+.superpowers/
