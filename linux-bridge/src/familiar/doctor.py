@@ -113,15 +113,22 @@ class _Facts:
 
 
 _REPAIR = [
+    "familiar repair          # does everything below, for you",
+    "",
+    "# or by hand:",
     "systemctl --user stop familiar",
     "bluetoothctl",
     "  pairable on          # without this, pairing can NEVER succeed",
     "  agent KeyboardOnly   # the firmware needs a 6-digit passkey typed",
     "  default-agent",
+    "  remove {addr}        # drop OUR stale half first, or pair fails with",
+    "                       # AlreadyExists -- BlueZ still thinks it's paired",
     "  scan on              # wait for Claude-XXXX to appear",
     "  scan off",
     "  pair {addr}          # type the code shown ON THE STICK",
     "  trust {addr}",
+    "  disconnect {addr}    # a connected peripheral stops advertising, so",
+    "                       # skipping this makes a SUCCESSFUL repair look failed",
     "  quit",
     "systemctl --user start familiar",
     "",

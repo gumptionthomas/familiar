@@ -1,0 +1,155 @@
+"""`familiar repair` -- re-pair the M5 after it loses its side of the bond.
+
+Split like doctor.py: the SEQUENCE below is pure policy with every side
+effect injected, so it is testable without a Bluetooth adapter. The D-Bus
+work lives in bluez_agent.py; systemctl/journal in service_ctl.py.
+
+Why a human is unavoidable: the firmware advertises DisplayOnly IO with
+ESP_LE_AUTH_REQ_SC_MITM_BOND (ble_bridge.cpp:121-122), so the ESP32 picks a
+RANDOM 6-digit passkey per pairing. Nothing here can know it in advance.
+"""
+from dataclasses import dataclass, field
+
+
+@dataclass
+class RepairReport:
+    ok: bool = False
+    steps: list = field(default_factory=list)   # (label, "ok")
+    message: str = ""
+
+
+class Aborted(Exception):
+    """A step failed. Stop, but ALWAYS restart the daemon on the way out."""
+
+
+async def run_repair(address, bluez, ui, service, *,
+                     discover_timeout=30.0, connect_timeout=30.0):
+    report = RepairReport()
+
+    def done(label):
+        report.steps.append((label, "ok"))
+        ui.info(f"  {label}")
+
+    restart_failed = False
+    try:
+        service.stop()
+        done("stopped the daemon")
+        # Without this, BlueZ answers every pairing attempt with "Pairing not
+        # supported" and no amount of retrying can succeed.
+        await bluez.ensure_pairable()
+        done("made the adapter pairable")
+
+        # BlueZ still holds keys for a one-sided bond, and Device1.Pair() on an
+        # already-known device fails with AlreadyExists. Drop OUR half first.
+        stale = await bluez.find_device(address, timeout=5.0)
+        if stale is not None:
+            await bluez.remove_device(stale)
+            done("dropped the stale pairing record")
+
+        target = await bluez.find_device(address, timeout=discover_timeout)
+        if target is None:
+            raise Aborted("the stick never appeared — press a button on it, "
+                          "check it is charged, and that Bluetooth is on in "
+                          "its settings menu")
+        done("found the stick")
+
+        await bluez.pair(target, ui.ask_passkey)
+        done("paired")
+
+        await bluez.set_trusted(target)
+        done("trusted")
+
+        # The pairing session leaves a link behind, and a connected peripheral
+        # stops advertising -- so the daemon would log "was not found" and the
+        # repair would look like it had failed (2026-08-11).
+        await bluez.disconnect(target)
+        done("cleared the pairing link")
+    except Exception as e:
+        report.message = str(e) if isinstance(e, Aborted) else \
+            f"{type(e).__name__}: {e}"
+        return report
+    finally:
+        # An exception raised inside `finally` DISCARDS the pending `return
+        # report` above and propagates out of run_repair -- past main()'s
+        # generic handler, which would print "repair could not run" with no
+        # mention that the daemon is now stopped. `service.start()` is a
+        # subprocess call and CAN raise (TimeoutExpired, OSError), especially
+        # right after a slow `stop()` (systemd may still be tearing the unit
+        # down). The one invariant this whole command promises is that the
+        # daemon always comes back, so a failure here must become a reported
+        # outcome, never an escaping exception.
+        try:
+            service.start()
+            done("restarted the daemon")
+        except Exception as e:
+            restart_failed = True
+            report.message = (
+                (report.message + " | " if report.message else "")
+                + f"could not restart the daemon: {type(e).__name__}: {e} — "
+                "run: systemctl --user start familiar")
+
+    # If the restart itself failed, the daemon is NOT running -- do not ask
+    # it whether it connected (that would either hang on a dead service or,
+    # worse, overwrite the restart-failure message above with a connect-
+    # timeout message that hides the real, more urgent problem).
+    if restart_failed:
+        return report
+
+    if await service.wait_for_connect(connect_timeout):
+        report.ok = True
+        report.message = "the buddy is back"
+    else:
+        report.message = (
+            f"paired, but the daemon did not connect within "
+            f"{int(connect_timeout)}s — run `familiar doctor`")
+    return report
+
+
+class _Console:
+    def ask_passkey(self):
+        return input("      passkey shown ON THE STICK: ").strip()
+
+    def info(self, msg):
+        print(msg)
+
+
+def main(argv=None) -> int:
+    import argparse
+    import asyncio
+
+    from .bluez_agent import Bluez, connect_system_bus
+    from .config import load as load_config   # doctor.py aliases it the same way
+    from .service_ctl import Service
+
+    ap = argparse.ArgumentParser(
+        prog="familiar repair",
+        description="Re-pair the M5 after it loses its side of the bond. "
+                    "Stops the daemon, re-pairs, restarts, and verifies.")
+    args = ap.parse_args(argv)
+
+    cfg = load_config()
+    print("familiar repair — the stick will show a 6-digit code\n")
+
+    async def go():
+        bus = await connect_system_bus()
+        bluez = Bluez(bus)
+        await bluez.register_agent()
+        return await run_repair(cfg.address, bluez, _Console(), Service())
+
+    try:
+        report = asyncio.run(go())
+    except Exception as e:
+        print(f"\n!!  repair could not run: {type(e).__name__}: {e}\n")
+        report = None
+
+    if report is not None and report.ok:
+        print(f"\nOK  {report.message}")
+        return 0
+
+    if report is not None:
+        print(f"\n!!  {report.message}")
+    print("\n    the manual steps, if you need them:\n")
+    from .doctor import _repair_steps
+    for line in _repair_steps(cfg.address):
+        print(f"      {line}")
+    return 1

@@ -3,7 +3,7 @@ name = "familiar"
 version = "0.1.0"
 description = "Familiar: a desk buddy for Claude Code, on an M5 or a Tidbyt"
 requires-python = ">=3.11"
-dependencies = ["bleak>=0.22", "pillow>=10"]
+dependencies = ["bleak>=0.22", "pillow>=10", "dbus-fast>=2.0"]
 
 [project.scripts]
 familiar = "familiar.cli:main"

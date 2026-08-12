@@ -146,6 +146,18 @@ was found.
 The cases below are what it detects; you shouldn't normally need to work through
 them by hand.
 
+Doctor never changes anything. When it names a one-sided bond, this fixes it:
+
+```bash
+familiar repair
+```
+
+It stops the daemon, drops the stale pairing record, re-pairs (you type the
+6-digit code the stick displays), clears the link the pairing session leaves
+behind, restarts the daemon, and waits for it to reconnect. The firmware picks
+a random passkey per pairing, so the six digits are the one part that cannot be
+automated.
+
 ## Troubleshooting
 
 **`disconnected: Device with address ... was not found`, but `bluetoothctl

@@ -245,6 +245,24 @@ def test_main_exits_1_on_an_error_and_prints_the_remedy(monkeypatch, capsys):
     assert "pairable on" in out
 
 
+def test_the_manual_fallback_can_actually_fix_a_one_sided_bond():
+    # Without `remove`, `pair` fails immediately with AlreadyExists (BlueZ
+    # still believes it is paired). Without `disconnect` after `trust`, a
+    # successful repair leaves a link behind that makes it look like it
+    # failed (2026-08-11). Both are mandatory now that `familiar repair`
+    # established them -- the printed manual steps must not contradict it.
+    steps = doctor._repair_steps("F0:16:1D:03:4C:FA")
+    joined = "\n".join(steps)
+    assert "remove F0:16:1D:03:4C:FA" in joined
+    assert "disconnect F0:16:1D:03:4C:FA" in joined
+    remove_at = next(i for i, s in enumerate(steps) if s.strip().startswith("remove "))
+    pair_at = next(i for i, s in enumerate(steps) if s.strip().startswith("pair "))
+    trust_at = next(i for i, s in enumerate(steps) if s.strip().startswith("trust "))
+    disconnect_at = next(i for i, s in enumerate(steps) if s.strip().startswith("disconnect "))
+    assert remove_at < pair_at, "remove the stale record before pairing"
+    assert disconnect_at > trust_at, "clear the link only after trusting"
+
+
 def test_main_exits_0_when_healthy(monkeypatch, capsys):
     monkeypatch.setattr(doctor, "collect", lambda cfg: _facts())
     assert doctor.main([]) == 0
