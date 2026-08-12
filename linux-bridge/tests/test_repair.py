@@ -153,3 +153,19 @@ def test_a_failing_stop_still_restarts_the_daemon():
     report, _, _, service = _run(service=service)
     assert report.ok is False
     assert "start" in service.calls
+
+
+from familiar import service_ctl
+
+
+def test_saw_connect_recognises_the_daemons_connect_line():
+    assert service_ctl.saw_connect(
+        "Aug 11 22:18:31 calvin familiar[12941]: "
+        "[familiar] connected F0:16:1D:03:4C:FA\n") is True
+
+
+def test_saw_connect_is_not_fooled_by_a_disconnect():
+    # "disconnected:" contains "connected" as a substring. The daemon logs
+    # far more disconnects than connects, so this would invert the result.
+    assert service_ctl.saw_connect(
+        "[familiar] disconnected: failed to discover services\n") is False
