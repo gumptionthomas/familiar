@@ -79,17 +79,23 @@ New `linux-bridge/src/familiar/repair.py`, wired into `cli.py` beside `doctor`.
 so no new requirement. `repair` owns the whole sequence:
 
 1. `systemctl --user stop familiar`
-2. Clear any stale link (`Device1.Disconnect`)
-3. `Adapter1.StartDiscovery`, then wait for the target to appear. Target selection mirrors
+2. Force `Adapter1.Pairable = true`. Doctor's own remedy leads with `pairable on` for a
+   reason: while it is off, BlueZ answers every attempt with "Pairing not supported" and no
+   amount of retrying can succeed.
+3. Drop BlueZ's stale record with `Adapter1.RemoveDevice`. This is **mandatory**, not
+   housekeeping: in a one-sided bond BlueZ still believes it is paired, so `Device1.Pair()`
+   fails outright with `org.bluez.Error.AlreadyExists`. Removing the record also tears down
+   any link the device is holding, which subsumes the plain disconnect.
+4. `Adapter1.StartDiscovery`, then wait for the target to appear. Target selection mirrors
    `_resolve_address` (`ble.py:47-52`): use `cfg.address` when set, otherwise the first device
    whose name starts with `Claude-`
-4. `Device1.Pair()` → BlueZ calls our agent's `RequestPasskey` → prompt the user for the six
+5. `Device1.Pair()` → BlueZ calls our agent's `RequestPasskey` → prompt the user for the six
    digits shown on the stick → return it
-5. Set `Device1.Trusted = true`
-6. `Device1.Disconnect` — the pairing session's own phantom link, the exact fault that made
+6. Set `Device1.Trusted = true`
+7. `Device1.Disconnect` — the pairing session's own phantom link, the exact fault that made
    tonight's re-pair look like it had failed
-7. `systemctl --user start familiar`
-8. Verify: wait up to 30s for `[familiar] connected` in the journal
+8. `systemctl --user start familiar`
+9. Verify: wait up to 30s for `[familiar] connected` in the journal
 
 Holding discovery for the whole operation is what makes this work at all. The documented manual
 remedy warns that one-shot `bluetoothctl` invocations tear discovery down between calls, so a
