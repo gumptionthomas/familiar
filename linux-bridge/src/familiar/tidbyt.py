@@ -1,11 +1,15 @@
 """Push the buddy pet + haiku to a Tidbyt 64x32 over the HTTP API.
 
 Best-effort: any failure (no config, network, non-200) is swallowed so it never
-disturbs the M5 path. `poster` is injectable for tests.
+disturbs the M5 path. It is still *reported* — a silent push failure is
+indistinguishable from a healthy one, which once hid a wrong installationID for
+a whole session. We push every turn-end, so warn once per outage rather than
+per attempt. `poster` is injectable for tests.
 """
 import asyncio
 import base64
 import json
+import sys
 import urllib.request
 
 from . import haiku_render
@@ -13,6 +17,30 @@ from . import haiku_render
 PUSH_URL = "https://api.tidbyt.com/v0/devices/%s/push"
 # Must stay alphanumeric — the API 400s on hyphens, so no "claude-buddy" here.
 INSTALLATION_ID = "familiar"
+
+
+# True once an outage has been reported; reset by the next success so each
+# fresh outage speaks up exactly once.
+_warned = False
+
+
+def reset_push_warning() -> None:
+    global _warned
+    _warned = False
+
+
+def _warn(msg) -> None:
+    global _warned
+    if not _warned:
+        print(f"[familiar] tidbyt push failed: {msg}", file=sys.stderr)
+        _warned = True
+
+
+def _note_success() -> None:
+    global _warned
+    if _warned:
+        print("[familiar] tidbyt push succeeded again", file=sys.stderr)
+        _warned = False
 
 
 def _post(url, data, headers) -> int:
@@ -40,9 +68,15 @@ async def push_image(webp_bytes, *, device_id, api_token,
     try:
         status = await asyncio.get_running_loop().run_in_executor(
             None, post, url, body, headers)
-        return status == 200
-    except Exception:
+    except Exception as e:
+        _warn(e)
         return False
+    if status != 200:
+        _warn(f"HTTP {status} (installationID {installation_id!r}, "
+              f"device {device_id!r})")
+        return False
+    _note_success()
+    return True
 
 
 async def push(lines, *, device_id, api_token, installation_id=INSTALLATION_ID,
@@ -52,7 +86,8 @@ async def push(lines, *, device_id, api_token, installation_id=INSTALLATION_ID,
     render = renderer or haiku_render.render
     try:
         webp = render([str(x) for x in lines][:3])
-    except Exception:
+    except Exception as e:
+        _warn(f"render: {e}")
         return False
     return await push_image(webp, device_id=device_id, api_token=api_token,
                             installation_id=installation_id, poster=poster)
