@@ -54,10 +54,11 @@ class FakeUi:
 
 
 class FakeService:
-    def __init__(self, connects=True, stop_raises=False):
+    def __init__(self, connects=True, stop_raises=False, start_raises=False):
         self.calls = []
         self._connects = connects
         self._stop_raises = stop_raises
+        self._start_raises = start_raises
 
     def stop(self):
         self.calls.append("stop")
@@ -66,6 +67,8 @@ class FakeService:
 
     def start(self):
         self.calls.append("start")
+        if self._start_raises:
+            raise RuntimeError("systemctl start timed out")
 
     async def wait_for_connect(self, timeout):
         self.calls.append("wait")
@@ -153,6 +156,26 @@ def test_a_failing_stop_still_restarts_the_daemon():
     report, _, _, service = _run(service=service)
     assert report.ok is False
     assert "start" in service.calls
+
+
+def test_a_raising_restart_still_returns_a_report_naming_the_fix():
+    # An exception inside `finally` would discard the pending `return report`
+    # and propagate out of run_repair entirely -- leaving the daemon stopped
+    # with no report saying so. It must come back as a normal report instead,
+    # naming the one command that recovers.
+    service = FakeService(start_raises=True)
+    report, _, _, service = _run(service=service)
+    assert isinstance(report, repair.RepairReport)
+    assert "systemctl --user start familiar" in report.message
+
+
+def test_a_raising_restart_on_an_otherwise_successful_repair_is_not_ok():
+    # Pairing succeeded, but the daemon never actually came back up -- this
+    # must never be reported as ok, no matter how clean the rest of the
+    # sequence was.
+    service = FakeService(start_raises=True)
+    report, _, _, service = _run(service=service)
+    assert report.ok is False
 
 
 from familiar import service_ctl

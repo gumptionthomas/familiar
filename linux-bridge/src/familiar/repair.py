@@ -30,6 +30,7 @@ async def run_repair(address, bluez, ui, service, *,
         report.steps.append((label, "ok"))
         ui.info(f"  {label}")
 
+    restart_failed = False
     try:
         service.stop()
         done("stopped the daemon")
@@ -68,8 +69,31 @@ async def run_repair(address, bluez, ui, service, *,
             f"{type(e).__name__}: {e}"
         return report
     finally:
-        service.start()
-        done("restarted the daemon")
+        # An exception raised inside `finally` DISCARDS the pending `return
+        # report` above and propagates out of run_repair -- past main()'s
+        # generic handler, which would print "repair could not run" with no
+        # mention that the daemon is now stopped. `service.start()` is a
+        # subprocess call and CAN raise (TimeoutExpired, OSError), especially
+        # right after a slow `stop()` (systemd may still be tearing the unit
+        # down). The one invariant this whole command promises is that the
+        # daemon always comes back, so a failure here must become a reported
+        # outcome, never an escaping exception.
+        try:
+            service.start()
+            done("restarted the daemon")
+        except Exception as e:
+            restart_failed = True
+            report.message = (
+                (report.message + " | " if report.message else "")
+                + f"could not restart the daemon: {type(e).__name__}: {e} — "
+                "run: systemctl --user start familiar")
+
+    # If the restart itself failed, the daemon is NOT running -- do not ask
+    # it whether it connected (that would either hang on a dead service or,
+    # worse, overwrite the restart-failure message above with a connect-
+    # timeout message that hides the real, more urgent problem).
+    if restart_failed:
+        return report
 
     if await service.wait_for_connect(connect_timeout):
         report.ok = True
