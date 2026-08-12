@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <LittleFS.h>
 #include "ble_bridge.h"
+#include "version.h"
 #include <mbedtls/base64.h>
 #include <ArduinoJson.h>
 
@@ -117,22 +118,32 @@ inline bool xferCommand(JsonDocument& doc) {
     int vBus = (int)(M5.Axp.GetVBusVoltage() * 1000);
     int pct = (vBat - 3200) / 10;
     if (pct < 0) pct = 0; if (pct > 100) pct = 100;
-    char b[320];
+    // 512, not 320: this reply carries a 23-char pet name and a 31-char owner
+    // (stats.h), so the worst case was already ~337 bytes and only fit by luck.
+    char b[512];
     int len = snprintf(b, sizeof(b),
       "{\"ack\":\"status\",\"ok\":true,\"n\":0,\"data\":{"
       "\"name\":\"%s\",\"owner\":\"%s\",\"sec\":%s,"
       "\"bat\":{\"pct\":%d,\"mV\":%d,\"mA\":%d,\"usb\":%s},"
-      "\"sys\":{\"up\":%lu,\"heap\":%u,\"fsFree\":%lu,\"fsTotal\":%lu},"
+      "\"sys\":{\"fw\":\"%s\",\"up\":%lu,\"heap\":%u,\"fsFree\":%lu,\"fsTotal\":%lu},"
       "\"stats\":{\"appr\":%u,\"deny\":%u,\"vel\":%u,\"nap\":%lu,\"lvl\":%u}"
       "}}\n",
       petName(), ownerName(), bleSecure() ? "true" : "false",
       pct, vBat, iBat, (vBus > 4000) ? "true" : "false",
-      millis() / 1000, ESP.getFreeHeap(),
+      FW_VERSION, millis() / 1000, ESP.getFreeHeap(),
       (unsigned long)(LittleFS.totalBytes() - LittleFS.usedBytes()),
       (unsigned long)LittleFS.totalBytes(),
       stats().approvals, stats().denials, statsMedianVelocity(),
       (unsigned long)stats().napSeconds, stats().level
     );
+    // snprintf truncates rather than overflowing, so this is memory-safe -- but
+    // a truncated reply is MALFORMED JSON, which parses as garbage instead of
+    // failing honestly. tools/measure_discharge.py reads this reply; a silent
+    // truncation there looks like a harness that mysteriously records nothing.
+    if (len < 0 || len >= (int)sizeof(b)) {
+      _xAck("status", false);
+      return true;
+    }
     Serial.write(b, len);
     bleWrite((const uint8_t*)b, len);
     return true;
