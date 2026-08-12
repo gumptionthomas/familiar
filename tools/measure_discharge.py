@@ -44,7 +44,7 @@ async def main():
 
     def on_notify(_c, data):
         # BLE notifications are fragmented: ble_bridge.cpp caps chunks at 180 bytes,
-        # but the status reply (320-byte buffer with name, owner, sec, bat{4}, sys{4},
+        # but the status reply (512-byte buffer with name, owner, sec, bat{4}, sys{5},
         # stats{5}) exceeds that, so replies always span 2+ notifications. Reassemble
         # on newline boundaries (firmware terminates each reply with \n). Mirrors
         # daemon.py:84-96 for the same line-delimited JSON protocol.
@@ -63,6 +63,9 @@ async def main():
             except Exception:
                 continue
             if msg.get("ack") == "status":
+                if not msg.get("ok"):
+                    print("status reply reported failure — skipping this sample")
+                    continue
                 rows.put_nowait(msg.get("data", {}).get("bat", {}))
 
     with open(args.out, "w", newline="") as fh:
