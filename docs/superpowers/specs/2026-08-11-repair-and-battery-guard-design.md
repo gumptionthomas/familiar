@@ -139,6 +139,47 @@ Serial is not an option: plugging in USB charges the stick and destroys the meas
 
 Phase 3 does not begin until this data exists.
 
+### RESULT (2026-08-12): the theory is dead
+
+Run on 2026-08-12, 15:15 → 17:05. Data: `discharge-2026-08-12.csv` (110 samples, 60s
+interval). The stick drained from 4152 mV to 3187 mV over 107 minutes at a steady ~-65 mA,
+died, and sat dead for two hours.
+
+**The bond survived.** On reconnecting power the daemon logged
+`[familiar] connected F0:16:1D:03:4C:FA` seven seconds after boot; `bluetoothctl info` shows
+`Paired/Bonded/Trusted: yes` and `familiar doctor` exits 0.
+
+So an uncontrolled brownout does **not** cost the M5 its pairing keys, and **`BatteryGuard`
+must not be written** — its entire justification was protecting a bond that turns out not to
+need protecting. Phase 3 is cancelled, not deferred.
+
+**The curve, recorded because it was expensive to obtain:**
+
+| Phase | Behaviour |
+|---|---|
+| minutes 0-50 | 4152 → 3817 mV, decaying slope |
+| minutes 50-100 | **plateau, ~-3.5 mV/min**, 3817 → 3615 mV |
+| minutes 100-107 | **collapse, ~-60 mV/min**, 3615 → 3187 mV, then death |
+
+The knee is at **~3600 mV**, and past it there are only ~6 minutes left. Worth recording that
+the thresholds this spec originally guessed — warn 3400, shutdown 3300 — were badly wrong:
+3400 mV is reached two minutes before death and 3300 mV about one. A guard built on the guess
+would have fired far too late to do anything. Had it been written first, as originally
+proposed, it would have been useless *and* aimed at a non-existent problem.
+
+It died at 3187 mV, just under the 3200 the firmware's `pct` maths treats as empty
+(`xfer.h:118`), so the percentage reading stays honest to zero.
+
+**What this does not settle.** The experiment drained the stick while it was *connected* over
+BLE the whole time. The reported real-world trigger is the laptop going *out of range*, where
+the stick instead dies while advertising and unconnected. That variable was not controlled, so
+"dies while advertising" remains untested — but the mechanism this spec proposed (a brownout
+corrupting NVS) is disproven, since NVS demonstrably survived death.
+
+**Next time it recurs, capture evidence rather than assuming:** check whether the stick's
+screen actually reads `discover`, and run `journalctl -k -b | grep -i smp` while it is
+failing. A new theory needs a real observation, not another plausible story.
+
 ## Phase 3 — `BatteryGuard` (conditional on Phase 2)
 
 New `src/battery_guard.h`: a pure state machine with no M5 library calls, so it runs under the
