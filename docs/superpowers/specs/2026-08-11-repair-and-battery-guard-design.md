@@ -139,7 +139,7 @@ Serial is not an option: plugging in USB charges the stick and destroys the meas
 
 Phase 3 does not begin until this data exists.
 
-### RESULT (2026-08-12): the theory is dead
+### RESULT (2026-08-12): the mechanism is disproven for the case tested — which was the wrong case
 
 Run on 2026-08-12, 15:15 → 17:05. Data: `discharge-2026-08-12.csv` (110 samples, 60s
 interval). The stick drained from 4152 mV to 3187 mV over 107 minutes at a steady ~-65 mA,
@@ -170,15 +170,35 @@ proposed, it would have been useless *and* aimed at a non-existent problem.
 It died at 3187 mV, just under the 3200 the firmware's `pct` maths treats as empty
 (`xfer.h:118`), so the percentage reading stays honest to zero.
 
-**What this does not settle.** The experiment drained the stick while it was *connected* over
-BLE the whole time. The reported real-world trigger is the laptop going *out of range*, where
-the stick instead dies while advertising and unconnected. That variable was not controlled, so
-"dies while advertising" remains untested — but the mechanism this spec proposed (a brownout
-corrupting NVS) is disproven, since NVS demonstrably survived death.
+**What this does not settle — and the user confirms it is the whole point.** The experiment
+drained the stick while it was *connected* over BLE throughout. The reported real-world trigger
+is the laptop going *out of range*, where the stick dies while advertising and unconnected. On
+being shown this result the user's response was: *"dying out of range is exactly where I saw
+the problem before."* So the one variable left uncontrolled is the one that matters, and
+"the theory is dead" (this section's original heading) overstated it.
 
-**Next time it recurs, capture evidence rather than assuming:** check whether the stick's
-screen actually reads `discover`, and run `journalctl -k -b | grep -i smp` while it is
-failing. A new theory needs a real observation, not another plausible story.
+What tonight establishes precisely: **a brownout is not, by itself, sufficient to corrupt the
+bond.** Death alone does not do it. That is worth knowing, but it is not the scenario.
+
+**The refined hypothesis — corruption needs a WRITE in flight, not merely a brownout.** Bond
+records are rewritten during connection and security procedures, not just at first pairing. The
+dangerous moment is therefore not death itself but *reconnection while nearly flat*: the laptop
+comes back into range, the daemon connects, bluedroid touches NVS to update the peer record,
+and the rail collapses mid-write. Tonight's run could not reach that state — the link was
+established and stable for the entire drain, so no security procedure ran anywhere near the
+end. It also explains the reported "usually, but not always": it depends on whether a write
+happens to coincide with the collapse.
+
+**The experiment that would test it** (Phase 2b): repeat the drain with the daemon STOPPED and
+no BLE client, so the stick dies while advertising alone. No telemetry is possible — nothing is
+connected to ask — but the runtime is now known (~107 minutes from full), and the datum wanted
+is binary: does the bond survive? Because the real-world failure is intermittent, a single
+surviving run does not clear it; a single lost one confirms it.
+
+**Either way, capture evidence at the next natural recurrence** rather than reasoning about it:
+check whether the stick's screen actually reads `discover`, and run
+`journalctl -k -b | grep -i smp` while it is failing. Two plausible stories have now been wrong;
+an observation is worth more than a third.
 
 ## Phase 3 — `BatteryGuard` (conditional on Phase 2)
 
