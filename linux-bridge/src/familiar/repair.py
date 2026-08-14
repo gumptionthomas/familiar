@@ -105,9 +105,45 @@ async def run_repair(address, bluez, ui, service, *,
     return report
 
 
+def preflight_error(stdin=None):
+    """Why repair cannot possibly work -- checked BEFORE anything is mutated.
+
+    On 2026-08-14 this ran without a terminal. It stopped the daemon and
+    REMOVED BlueZ's pairing record before reaching the prompt, then raised
+    EOFError inside a D-Bus callback, which surfaced as a misleading
+    "Authentication Failed". The passkey exists only on the stick's screen,
+    so no terminal means no repair -- and that is knowable up front, while
+    the cost of being wrong is still zero.
+    """
+    import sys
+    stdin = sys.stdin if stdin is None else stdin
+    if not stdin.isatty():
+        return ("familiar repair needs an interactive terminal — the stick "
+                "displays a 6-digit passkey that has to be typed. Run it "
+                "directly, not through a pipe or a non-interactive shell.")
+    return None
+
+
+def read_passkey(stream, timeout=55.0):
+    """Read one line, giving up after `timeout` seconds.
+
+    BlueZ's agent request expires on its own (~60s) and reports an opaque
+    pairing failure, so time out just before that and say what really
+    happened: nobody typed the code.
+    """
+    import select
+    ready, _, _ = select.select([stream], [], [], timeout)
+    if not ready:
+        raise TimeoutError(
+            f"no passkey typed within {int(timeout)}s")
+    return stream.readline().strip()
+
+
 class _Console:
     def ask_passkey(self):
-        return input("      passkey shown ON THE STICK: ").strip()
+        import sys
+        print("      passkey shown ON THE STICK: ", end="", flush=True)
+        return read_passkey(sys.stdin)
 
     def info(self, msg):
         print(msg)
@@ -126,6 +162,13 @@ def main(argv=None) -> int:
         description="Re-pair the M5 after it loses its side of the bond. "
                     "Stops the daemon, re-pairs, restarts, and verifies.")
     args = ap.parse_args(argv)
+
+    # FIRST, before the daemon is stopped or BlueZ's pairing record is dropped.
+    # Everything below this line mutates state that is expensive to restore.
+    problem = preflight_error()
+    if problem:
+        print(f"!!  {problem}")
+        return 2
 
     cfg = load_config()
     print("familiar repair — the stick will show a 6-digit code\n")

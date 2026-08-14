@@ -1,4 +1,5 @@
 import asyncio
+import os
 
 import pytest
 
@@ -219,3 +220,46 @@ def test_doctor_still_prints_the_manual_fallback():
 def test_the_cli_knows_the_repair_command():
     from familiar import cli
     assert "repair" in cli._HELP
+
+
+class _FakeStdin:
+    def __init__(self, tty):
+        self._tty = tty
+
+    def isatty(self):
+        return self._tty
+
+
+def test_a_non_interactive_stdin_is_refused():
+    # THE 2026-08-14 bug. Run without a terminal, repair got as far as stopping
+    # the daemon and REMOVING BlueZ's pairing record before discovering it could
+    # not prompt -- then died inside a D-Bus callback, surfacing as a misleading
+    # "Authentication Failed". The passkey only exists on the stick's screen, so
+    # no terminal means no repair, and that is knowable before touching anything.
+    msg = repair.preflight_error(_FakeStdin(tty=False))
+    assert msg is not None
+    assert "interactive" in msg.lower()
+
+
+def test_an_interactive_stdin_passes_preflight():
+    assert repair.preflight_error(_FakeStdin(tty=True)) is None
+
+
+def test_the_passkey_prompt_gives_up_rather_than_hanging(tmp_path):
+    # BlueZ's agent request expires on its own (~60s) and reports an opaque
+    # pairing failure. Time out first so the user is told what actually happened.
+    r, w = os.pipe()
+    try:
+        with os.fdopen(r) as stream:
+            with pytest.raises(TimeoutError):
+                repair.read_passkey(stream, timeout=0.1)
+    finally:
+        os.close(w)
+
+
+def test_the_passkey_prompt_returns_what_was_typed():
+    r, w = os.pipe()
+    os.write(w, b"  654321  \n")
+    os.close(w)
+    with os.fdopen(r) as stream:
+        assert repair.read_passkey(stream, timeout=5) == "654321"
