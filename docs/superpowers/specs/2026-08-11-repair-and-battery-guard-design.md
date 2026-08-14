@@ -200,6 +200,60 @@ check whether the stick's screen actually reads `discover`, and run
 `journalctl -k -b | grep -i smp` while it is failing. Two plausible stories have now been wrong;
 an observation is worth more than a third.
 
+### THE RECURRENCE (2026-08-14) — caught in the act, and it settles it
+
+It recurred two days later, and the evidence was captured before repairing. It answers the
+open question more directly than Phase 2b would have, so **Phase 2b is unnecessary and should
+not be run.**
+
+The user took the laptop out of range, later disabled Bluetooth on the laptop, returned, and
+re-enabled it. The stick was showing `discover`. The daemon's own log:
+
+```
+17:07:39  link dropped after 25234s; reconnecting     <- 7h connected, then out of range
+17:07:42  connected                                    <- reconnects fine, BOND STILL INTACT
+17:07:44  link flapped after 0.2s; backing off
+17:07:49  connected                                    <- still intact
+17:07:51  link flapped after 0.2s; backing off
+17:07:57  connected                                    <- still intact
+17:10:22  link dropped after 145s; reconnecting
+17:10:31  failed to discover services                  <- BOND NOW BROKEN
+17:10:40  repeated failures ... paired=True bonded=True trusted=True
+17:10:48  No powered Bluetooth adapters found          <- user disabled BT, AFTER the fact
+```
+
+**Three things this establishes.**
+
+1. **Power is not involved at all.** The stick held a link for seven hours, then connected
+   successfully three times at 17:07. You cannot connect to a dead stick. The failing signature
+   is `failed to discover services` (alive and advertising), not `was not found` (absent). It
+   never browned out, never rebooted, and was never on the edge of its battery.
+2. **Disabling Bluetooth did not cause it.** The bond broke at 17:10:31, seventeen seconds
+   *before* the adapter powered off at 17:10:48.
+3. **The trigger is the RANGE BOUNDARY**, not the battery: a burst of connect / 0.2s-flap /
+   reconnect cycles as the laptop walked out of range, and somewhere in that burst the M5
+   discarded its keys.
+
+So the entire battery framing of this spec — Phases 2, 2b and 3 — was aimed at the wrong
+subsystem. The drain experiment was still worth running: it is what forced the power
+explanation to be abandoned rather than patched.
+
+**Current hypothesis (unproven, but it fits every observation).** When a link drops
+mid-encryption-setup at the edge of range, authentication fails, and the ESP32's stack discards
+the bond. `ble_bridge.cpp:81-86` already disconnects on `cmpl.success == false`; the open
+question is whether bluedroid also purges the stored LTK on that path. This explains
+"usually, but not always" — it depends on whether a drop lands *inside* a security procedure
+rather than on a settled link.
+
+**One contrast worth recording:** the 2026-08-11 incident logged
+`unexpected SMP command 0x0b from f0:16:1d:03:4c:fa` in the kernel; the 2026-08-14 recurrence
+logged no fresh SMP line at all. Same end state, different kernel-visible evidence — so the SMP
+fingerprint is a sufficient signal for `doctor`, not a necessary one.
+
+**If this is pursued further, it is a firmware investigation, not a battery one:** does the
+ESP32 remove a bond on authentication failure, and can the firmware be made to keep it? Until
+someone answers that, `familiar repair` remains the correct response, and it is now one command.
+
 ## Phase 3 — `BatteryGuard` (conditional on Phase 2)
 
 New `src/battery_guard.h`: a pure state machine with no M5 library calls, so it runs under the
