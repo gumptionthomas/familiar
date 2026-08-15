@@ -257,6 +257,37 @@ def test_the_passkey_prompt_gives_up_rather_than_hanging(tmp_path):
         os.close(w)
 
 
+def test_an_rfkill_blocked_adapter_is_refused_by_name():
+    # THE 2026-08-14 second failure. repair checked for a TTY but not for a
+    # usable radio, so it stopped the daemon and only then failed inside
+    # ensure_pairable with a bare "DBusError: Failed". Bluetooth was soft
+    # blocked at the rfkill level -- `bluetoothctl power on` cannot fix that,
+    # so naming the wrong remedy is worse than naming none.
+    msg = repair.preflight_error(_FakeStdin(tty=True), powered=False, blocked=True)
+    assert msg is not None
+    assert "rfkill unblock" in msg
+
+
+def test_a_powered_off_but_unblocked_adapter_is_refused_differently():
+    # Same symptom, different cause and different fix. Conflating them is what
+    # sent the user to a command that fails with the identical error.
+    msg = repair.preflight_error(_FakeStdin(tty=True), powered=False, blocked=False)
+    assert msg is not None
+    assert "rfkill" not in msg
+
+
+def test_a_healthy_adapter_passes_preflight():
+    assert repair.preflight_error(
+        _FakeStdin(tty=True), powered=True, blocked=False) is None
+
+
+def test_an_unknown_adapter_state_does_not_block_the_repair():
+    # `None` means "couldn't tell", the same convention doctor uses. Refusing to
+    # run because we failed to READ the state would strand the user.
+    assert repair.preflight_error(
+        _FakeStdin(tty=True), powered=None, blocked=None) is None
+
+
 def test_the_passkey_prompt_returns_what_was_typed():
     r, w = os.pipe()
     os.write(w, b"  654321  \n")

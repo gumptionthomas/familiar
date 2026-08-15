@@ -326,10 +326,23 @@ def _diagnose(facts: dict) -> list[Finding]:
             pairable = F.need(
                 "adapter", "pairable", "whether the adapter is pairable")
             if powered is False:
-                out.append(Finding(
-                    "error", "The Bluetooth adapter is powered off",
-                    "Nothing can connect until it is on.",
-                    ["bluetoothctl power on"]))
+                # Same symptom, two causes, and only one shared remedy works.
+                # On 2026-08-14 this said "powered off" against an rfkill-blocked
+                # radio; `bluetoothctl power on` then fails with the very
+                # org.bluez.Error.Failed the user came here about. A remedy that
+                # cannot work costs a debugging cycle -- name the actual cause.
+                if F.opt("adapter", "blocked") is True:
+                    out.append(Finding(
+                        "error", "Bluetooth is blocked by rfkill",
+                        "The adapter cannot be powered on while it is soft "
+                        "blocked — `bluetoothctl power on` fails with the same "
+                        "error it looks like it should fix.",
+                        ["rfkill unblock bluetooth"]))
+                else:
+                    out.append(Finding(
+                        "error", "The Bluetooth adapter is powered off",
+                        "Nothing can connect until it is on.",
+                        ["bluetoothctl power on"]))
             if pairable is False:
                 if bond_fires:
                     out.append(Finding(
@@ -526,11 +539,18 @@ def collect(cfg) -> dict:
     have_btctl = _try(
         lambda: bool(_run(["bluetoothctl", "--version"])), False) or False
 
-    adapter = {"powered": None, "pairable": None}
+    # rfkill is a separate subsystem from BlueZ: a soft-blocked radio reports
+    # Powered: no and refuses to be powered on. Read it independently of
+    # bluetoothctl so the two causes can be told apart.
+    blocked = _try(
+        lambda: _yesno(_run(["rfkill", "list", "bluetooth"]), "Soft blocked"))
+
+    adapter = {"powered": None, "pairable": None, "blocked": blocked}
     if have_btctl:
         show = _try(lambda: _run(["bluetoothctl", "show"]), "") or ""
         adapter = {"powered": _yesno(show, "Powered"),
-                   "pairable": _yesno(show, "Pairable")}
+                   "pairable": _yesno(show, "Pairable"),
+                   "blocked": blocked}
 
     device = {"known": None, "paired": None, "bonded": None,
               "trusted": None, "connected": None}

@@ -70,6 +70,38 @@ def test_an_unpaired_device_is_the_same_one_sided_bond_diagnosis():
     assert errs and "KeyboardOnly" in "\n".join(errs[0].remedy)
 
 
+def test_an_rfkill_blocked_adapter_names_rfkill_not_bluetoothctl():
+    # 2026-08-14: doctor said "powered off" and prescribed `bluetoothctl power
+    # on`. Run against a soft-blocked radio that command fails with the very
+    # same org.bluez.Error.Failed the user was already staring at. A remedy
+    # that cannot work is worse than no remedy -- it costs a debugging cycle.
+    findings = doctor.diagnose(_facts(
+        adapter={"powered": False, "pairable": True, "blocked": True},
+    ))
+    errs = _errors(findings)
+    assert errs
+    joined = "\n".join(errs[0].remedy)
+    assert "rfkill unblock" in joined
+
+
+def test_a_powered_off_adapter_that_is_not_blocked_still_says_power_on():
+    findings = doctor.diagnose(_facts(
+        adapter={"powered": False, "pairable": True, "blocked": False},
+    ))
+    joined = "\n".join(_errors(findings)[0].remedy)
+    assert "bluetoothctl power on" in joined
+    assert "rfkill" not in joined
+
+
+def test_an_unreadable_rfkill_state_falls_back_to_the_old_advice():
+    # blocked=None is "couldn't tell" -- doctor must still say something useful.
+    findings = doctor.diagnose(_facts(
+        adapter={"powered": False, "pairable": True, "blocked": None},
+    ))
+    joined = "\n".join(_errors(findings)[0].remedy)
+    assert "bluetoothctl power on" in joined
+
+
 def test_a_non_pairable_adapter_is_reported_before_any_repair_advice():
     # A re-pair CANNOT succeed while the adapter is Pairable: no. If we told the
     # user to re-pair without fixing this first, we would be sending them into a
@@ -181,6 +213,10 @@ def test_collect_parses_bluetoothctl_and_the_log(monkeypatch):
         if cmd[0] == "journalctl":
             return ("[familiar] disconnected: failed to discover services\n" * 5 +
                     "[familiar] clearing a possible stale link to AA:BB\n")
+        if cmd[0] == "rfkill":
+            return ("0: hci0: Bluetooth\n"
+                    "\tSoft blocked: no\n"
+                    "\tHard blocked: no\n")
         if cmd[0] == "pgrep":
             return ""
         raise AssertionError(f"unexpected command: {cmd}")
@@ -189,7 +225,8 @@ def test_collect_parses_bluetoothctl_and_the_log(monkeypatch):
     cfg = Config(address="F0:16:1D:03:4C:FA", owner="", socket_path="/tmp/x.sock")
     facts = doctor.collect(cfg)
 
-    assert facts["adapter"] == {"powered": True, "pairable": False}
+    assert facts["adapter"] == {"powered": True, "pairable": False,
+                                "blocked": False}
     assert facts["device"]["paired"] is True
     assert facts["device"]["connected"] is False
     assert facts["service"]["active"] is True
