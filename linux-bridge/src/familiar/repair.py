@@ -105,15 +105,54 @@ async def run_repair(address, bluez, ui, service, *,
     return report
 
 
-def preflight_error(stdin=None):
+def adapter_state(run=None):
+    """(powered, blocked) for the Bluetooth adapter. None means 'couldn't tell'.
+
+    Read-only, and best-effort by design: failing to READ the state must never
+    be a reason to refuse a repair.
+    """
+    import subprocess
+
+    def _run(cmd):
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              timeout=5, check=False).stdout
+    run = _run if run is None else run
+
+    powered = blocked = None
+    try:
+        for line in run(["bluetoothctl", "show"]).splitlines():
+            if "Powered:" in line:
+                powered = line.strip().endswith("yes")
+    except Exception:
+        pass
+    try:
+        for line in run(["rfkill", "list", "bluetooth"]).splitlines():
+            if "Soft blocked:" in line:
+                blocked = line.strip().endswith("yes")
+    except Exception:
+        pass
+    return powered, blocked
+
+
+def preflight_error(stdin=None, powered=None, blocked=None):
     """Why repair cannot possibly work -- checked BEFORE anything is mutated.
 
-    On 2026-08-14 this ran without a terminal. It stopped the daemon and
-    REMOVED BlueZ's pairing record before reaching the prompt, then raised
-    EOFError inside a D-Bus callback, which surfaced as a misleading
-    "Authentication Failed". The passkey exists only on the stick's screen,
-    so no terminal means no repair -- and that is knowable up front, while
-    the cost of being wrong is still zero.
+    Both entries here were paid for on 2026-08-14, hours apart, by the same
+    mistake: mutating state and only then discovering a precondition that was
+    knowable up front.
+
+    First it ran without a terminal. It stopped the daemon and REMOVED BlueZ's
+    pairing record before reaching the prompt, then raised EOFError inside a
+    D-Bus callback, surfacing as a misleading "Authentication Failed". The
+    passkey exists only on the stick's screen, so no terminal means no repair.
+
+    Then it ran against an rfkill-blocked radio. It stopped the daemon and
+    failed inside ensure_pairable with a bare "DBusError: Failed". A blocked
+    adapter cannot be powered on, and `bluetoothctl power on` fails with the
+    identical error -- so the cause has to be named, not guessed at.
+
+    `None` for powered/blocked means "couldn't tell", and never blocks a run:
+    failing to read the state is not evidence that the state is bad.
     """
     import sys
     stdin = sys.stdin if stdin is None else stdin
@@ -121,6 +160,13 @@ def preflight_error(stdin=None):
         return ("familiar repair needs an interactive terminal — the stick "
                 "displays a 6-digit passkey that has to be typed. Run it "
                 "directly, not through a pipe or a non-interactive shell.")
+    if blocked is True:
+        return ("Bluetooth is soft blocked by rfkill, so the adapter cannot be "
+                "powered on and pairing cannot start. Run: rfkill unblock "
+                "bluetooth")
+    if powered is False:
+        return ("The Bluetooth adapter is powered off, so pairing cannot "
+                "start. Run: bluetoothctl power on")
     return None
 
 
@@ -165,7 +211,8 @@ def main(argv=None) -> int:
 
     # FIRST, before the daemon is stopped or BlueZ's pairing record is dropped.
     # Everything below this line mutates state that is expensive to restore.
-    problem = preflight_error()
+    powered, blocked = adapter_state()
+    problem = preflight_error(powered=powered, blocked=blocked)
     if problem:
         print(f"!!  {problem}")
         return 2
