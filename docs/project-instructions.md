@@ -31,8 +31,9 @@ harness reaches none of the rendering, I²C, BLE or timing.
   `F0:16:1D:03:4C:FA`.
 - Serial is `/dev/ttyUSB0` (FTDI). It needs a real data USB-C cable — the
   magnetic mount cable is power-only, so there's no serial through it.
-- Flash with `pio run -t upload --upload-port /dev/ttyUSB0`. This does not cost
-  the pairing bond.
+- `pio` is at `~/.local/bin/pio`. Flash with
+  `pio run -t upload --upload-port /dev/ttyUSB0` — this does not cost the
+  pairing bond, but `pio run -t erase` would.
 - The firmware answers `status` over serial without BLE: open `/dev/ttyUSB0` at
   115200, wait ~2.5 s for the DTR reset, then write `{"cmd":"status"}`. Most
   firmware verification is automatable this way; only the screen needs eyes.
@@ -55,7 +56,9 @@ harness reaches none of the rendering, I²C, BLE or timing.
 ## When the buddy misbehaves
 
 - **Run `familiar doctor` first**, before any hypothesis. It's read-only and
-  names the cause; exit 0 is healthy, 1 is a problem.
+  names the cause. Exit 1 means an error-level fault; exit 0 only means it found
+  none — `??` warnings exit 0 as well, and a disconnected stick returns early
+  without a summary. Read the output, not the status code.
 - A loop of `failed to discover services` is a one-sided bond, and the daemon
   can never self-heal it. `familiar repair` does the whole dance, but it needs a
   real terminal — the passkey only exists on the stick's screen — so it cannot

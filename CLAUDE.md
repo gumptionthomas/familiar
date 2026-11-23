@@ -31,14 +31,26 @@ the change *is* a protocol change.
 
 | | |
 |---|---|
-| Build firmware | `pio run` (`pio` is at `~/.local/bin/pio`) |
-| Flash | `pio run -t upload` — see the README's *Flashing*; add `--upload-port` when more than one serial device is present |
+| Build firmware | `pio run` |
+| Flash | `pio run -t upload` — add `--upload-port` when more than one serial device is present |
 | Firmware tests (host) | `uvx --from platformio pio test -e native` |
 | Bridge tests | `cd linux-bridge && uv run pytest -q` |
-| Redeploy the bridge | `uv tool install . --force --no-cache` from `linux-bridge/` |
+| Redeploy the bridge | `uv tool install . --force --no-cache` from `linux-bridge/`, then `systemctl --user restart familiar` |
 
 `--no-cache` is not optional: the version stays `0.1.0`, so plain `--force`
-serves a cached wheel and silently reinstalls the old code.
+serves a cached wheel and silently reinstalls the old code. Reinstalling alone
+changes nothing — the running service keeps the old process until it restarts.
+
+The README's *Flashing* section tells you to `pio run -t erase` first on a
+previously-flashed device. **Don't, on a paired stick.** `pio run -t upload`
+writes only the app partition, so the pairing bond, pet name, owner and stats
+in NVS survive; `erase` destroys all of it and costs a re-pair that needs a
+human-typed passkey.
+
+When the buddy misbehaves, run **`familiar doctor`** before forming any
+hypothesis. It is read-only and names the cause. Exit 1 means it found an
+error-level fault; exit 0 only means it found none — warnings exit 0 too, so
+read the output rather than the status code.
 
 Use `uv`, not `pip` or `pipx`. `git add` new files explicitly — `git commit -a`
 skips untracked ones. `uv.lock` is committed.
@@ -59,8 +71,10 @@ untestable.
 
 - **I²C bus assignment is the reverse of the ESP32 default.** Read the header
   comment in `src/env.h` before touching any peripheral; getting it wrong kills
-  the IMU, RTC and PMIC at once. The QMP6988 answers on `0x70` on this unit —
-  the M5 docs' `0x56` is wrong, and `envInit` tries both.
+  the IMU, RTC and PMIC at once. The QMP6988's address depends on an SDO
+  strap and varies by HAT batch: this unit answers on `0x70`
+  (`SLAVE_ADDRESS_L`), `0x56` is the other strap, and `envInit` tries L then H.
+  Keep both.
 - **Offload blocking peripheral reads to a core-0 task**, don't throttle them in
   `loop()`. A 250 ms I²C read hitches the animation at any interval.
 - **Feed change detection lives in `src/feed.h`.** Its comment says why; the
@@ -105,12 +119,16 @@ rejected; reopen one only if the user asks.
 - **`BatteryGuard`.** Cancelled: a brownout alone does not cost the pairing
   bond, which was its entire reason to exist.
 - **Chasing the bond loss.** The cause is an unproven firmware hypothesis
-  (a link dropping mid-encryption-setup); the trigger looks like the range
-  boundary on a recently disturbed stick, not power. As of 2026-08-20, six days
-  of ordinary use produced zero losses. Don't "fix" it without a fresh
-  recurrence and evidence.
-- Known blind spot, unfixed: a link that holds ≥30 s and then drops for good is
-  counted by neither doctor's failure nor its flap tally, so it reads as healthy.
+  (a link dropping mid-encryption-setup). What the captured log does establish
+  is that the trigger is the range boundary — a burst of connect-and-flap
+  cycles — and not power, and not the Bluetooth toggle; a further suspicion,
+  unproven, is that it also needs a recently reset stick or a recycled adapter.
+  No recurrence has been recorded in the repo since 2026-08-14. Don't "fix" it
+  without a fresh one and evidence.
+- Known blind spot, unfixed: a link that holds ≥30 s and then drops for good
+  logs only `link dropped after Ns`, which is counted by neither doctor's
+  failure tally nor its flap tally. Doctor won't call that healthy, but it has
+  nothing to say about it either.
 
 ## What cannot be verified without the device
 
