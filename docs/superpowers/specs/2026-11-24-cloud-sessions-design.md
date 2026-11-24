@@ -84,8 +84,9 @@ user-level hooks should fire as for any terminal session.
 
 - **For:** works today, no relay, full fidelity (tokens, replies, haiku).
 - **Against:** only covers threads Thomas chooses to run locally; `calvin` has
-  to be on. Unverified that local threads load `~/.claude/settings.json`
-  hooks — one observation settles it.
+  to be on.
+- **Verified 2026-11-24:** Thomas ran a Project thread on `calvin` through
+  Remote Control and the stick reacted. Local Project threads already work.
 
 ### B — Cloud hooks → relay → bridge. *Recommended for cloud threads.*
 
@@ -200,14 +201,14 @@ the plan pins the default key set with a test (as the archive's is).
 - **Needs `calvin`:** the daemon holding the stream through
   `familiar.service`, and the stick actually going busy while a cloud thread
   works. That's a local-thread check plus Thomas's eyes on the screen.
-- **Needs Thomas:** whether a local Project thread already moves the buddy
-  (Approach A), and whether the Linux desktop app has the Hardware Buddy menu
+- **Needs Thomas:** whether the Linux desktop app has the Hardware Buddy menu
   (D).
 
 ## Phasing
 
-0. **Two observations, no code.** Thomas starts a Project thread locally and
-   watches the stick; and checks the desktop app's Developer menu.
+0. **Two observations, no code.** ~~A local Project thread moves the stick~~
+   (done 2026-11-24: it does). Still open: check the desktop app's Developer
+   menu for Hardware Buddy.
 1. **Cloud ingest (B).**
    1. Settle whether Project threads pick up a user-level
       `~/.claude/settings.json` written by the setup script (one test thread
