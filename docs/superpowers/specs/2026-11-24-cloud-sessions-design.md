@@ -1,8 +1,8 @@
 # Design: feeding the buddy from cloud sessions and claude.ai
 
 **Date:** 2026-11-24
-**Status:** Draft, for review. No code yet; the implementation plan follows
-once the open questions below are answered.
+**Status:** Parked 2026-11-24. Thomas leans toward the state-only relay (B,
+no content opt-in); relay host not yet chosen. No code or plan yet.
 **Size:** medium (one new bridge module, one stdlib-only hook script, an
 environment setup step)
 
