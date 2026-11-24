@@ -154,13 +154,14 @@ neither A nor B sees them. The coordinator is a different kind of session:
 | | Threads | Coordinator |
 |---|---|---|
 | Session kind (from the session record) | `anthropic_cloud`, with the project's cloud `environment_id` and the repo cloned | `ccs`, **no** `environment_id`, no repo |
-| Runs the environment's setup script | Yes | Almost certainly not: it isn't in that environment |
-| Network policy | The environment's allowlist | Unknown |
-| Hooks | Run (B's mechanism) | Unknown whether it runs Claude Code hooks at all |
+| Environment | The project's cloud environment | `cloud_default` (confirmed from its env) |
+| Runs the environment's setup script | Yes | No: it isn't in that environment |
+| Network policy | The environment's allowlist | `cloud_default`'s; `ntfy.sh` refused (403), and the project's allowlist doesn't apply |
+| Hooks | Run (B's mechanism) | None: no `launcher-settings.json`, no `settings.json`, `remote-settings.json` is `{}` |
 
 So the setup-script hook in B **will not fire for the coordinator**, and
-nothing in the repo or environment settings reaches it either. (Asked the
-coordinator for its env and shell access to confirm; record the answer here.)
+nothing in the repo or environment settings reaches it either. (Confirmed by
+the coordinator from its own shell on 2026-11-24.)
 
 What's left, in order of preference:
 
