@@ -165,7 +165,7 @@ the coordinator from its own shell on 2026-11-24.)
 
 What's left, in order of preference:
 
-1. **Accept the gap for v1.** Coordinator turns are short (seconds), so the
+1. **Accept the gap for v1. Chosen (Thomas, 2026-11-24).** Coordinator turns are short (seconds), so the
    buddy missing them costs the least. Threads are where the hour-long work is.
 2. **The session list, revisited.** The coordinator does show in the
    claude.ai/code session list with a `working` status while it answers —
@@ -188,7 +188,11 @@ that isn't a public API (the public `/v1/sessions` is the managed-agents
 product, a different thing). It would break silently, and borrowing the login
 token is the wrong kind of clever.
 
-### D — The desktop app's own Hardware Buddy. *Check, don't build.*
+### D — The desktop app's own Hardware Buddy. *Ruled out.*
+
+**Checked 2026-11-24:** the Linux desktop app on `calvin` has no Developer
+menu or Developer Mode option at all, so this route doesn't exist on Linux.
+
 
 Upstream's BLE bridge lives in the Claude desktop app's Developer menu and
 feeds Cowork and Code activity. It's documented for macOS and Windows only.
@@ -234,14 +238,12 @@ the plan pins the default key set with a test (as the archive's is).
 - **Needs `calvin`:** the daemon holding the stream through
   `familiar.service`, and the stick actually going busy while a cloud thread
   works. That's a local-thread check plus Thomas's eyes on the screen.
-- **Needs Thomas:** whether the Linux desktop app has the Hardware Buddy menu
-  (D).
 
 ## Phasing
 
 0. **Two observations, no code.** ~~A local Project thread moves the stick~~
-   (done 2026-11-24: it does). Still open: check the desktop app's Developer
-   menu for Hardware Buddy.
+   (done 2026-11-24: it does), and ~~the desktop app has Hardware Buddy~~
+   (done 2026-11-24: no Developer menu on Linux).
 1. **Cloud ingest (B).**
    1. Settle whether Project threads pick up a user-level
       `~/.claude/settings.json` written by the setup script (one test thread
@@ -263,8 +265,6 @@ the plan pins the default key set with a test (as the archive's is).
    inbound path). Recommendation: public ntfy.sh with HMAC, state-only, to
    start; the bridge takes any URL, so moving later is a config change.
 2. **Content:** state-only forever, or build the haiku opt-in in Phase 2?
-3. **Project chat:** is the v1 gap acceptable (coordinator answers don't
-   move the buddy), given the only signal for them is the unsupported session
-   list?
+3. ~~**Project chat:**~~ Settled 2026-11-24: the v1 gap is accepted.
 4. **Chats:** do they matter enough to build E, given it would only see the
    browser and not the desktop app?
