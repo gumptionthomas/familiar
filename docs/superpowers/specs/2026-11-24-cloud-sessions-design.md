@@ -146,6 +146,38 @@ Claude Code hook ─HTTPS POST─> relay <─HTTPS stream─ familiar daemon
   a 4-letter project code, timing). Latency is one relay hop, which an
   ambient display won't notice.
 
+### B′ — The project chat (the coordinator). *A gap B doesn't close.*
+
+Quick questions answered in the project chat itself never start a thread, so
+neither A nor B sees them. The coordinator is a different kind of session:
+
+| | Threads | Coordinator |
+|---|---|---|
+| Session kind (from the session record) | `anthropic_cloud`, with the project's cloud `environment_id` and the repo cloned | `ccs`, **no** `environment_id`, no repo |
+| Runs the environment's setup script | Yes | Almost certainly not: it isn't in that environment |
+| Network policy | The environment's allowlist | Unknown |
+| Hooks | Run (B's mechanism) | Unknown whether it runs Claude Code hooks at all |
+
+So the setup-script hook in B **will not fire for the coordinator**, and
+nothing in the repo or environment settings reaches it either. (Asked the
+coordinator for its env and shell access to confirm; record the answer here.)
+
+What's left, in order of preference:
+
+1. **Accept the gap for v1.** Coordinator turns are short (seconds), so the
+   buddy missing them costs the least. Threads are where the hour-long work is.
+2. **The session list, revisited.** The coordinator does show in the
+   claude.ai/code session list with a `working` status while it answers —
+   that's the only signal it emits that anything off-box can see. This is
+   Approach C, rejected below for reasons that still hold; it becomes worth
+   reopening only if Anthropic documents that endpoint or ships a supported
+   way to read it (e.g. a CLI command on `calvin` that lists remote sessions
+   with their status). Then a 10 s poll from the bridge would cover the
+   coordinator *and* every cloud thread, and B could be retired.
+3. **Not:** asking the coordinator to curl the relay itself on every reply.
+   That's F again — it depends on the model remembering, and it costs a tool
+   call on every quick answer.
+
 ### C — Poll Anthropic's session list. *Rejected.*
 
 The claude.ai/code session list does carry exactly the right field (a
@@ -230,5 +262,8 @@ the plan pins the default key set with a test (as the archive's is).
    inbound path). Recommendation: public ntfy.sh with HMAC, state-only, to
    start; the bridge takes any URL, so moving later is a config change.
 2. **Content:** state-only forever, or build the haiku opt-in in Phase 2?
-3. **Chats:** do they matter enough to build E, given it would only see the
+3. **Project chat:** is the v1 gap acceptable (coordinator answers don't
+   move the buddy), given the only signal for them is the unsupported session
+   list?
+4. **Chats:** do they matter enough to build E, given it would only see the
    browser and not the desktop app?
